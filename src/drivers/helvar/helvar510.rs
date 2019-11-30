@@ -14,7 +14,8 @@ use hidapi::HidDeviceInfo;
 //use hidapi::HidError;
 
 use super::super::driver::{self,DALIdriver, DALIcommandError};
-
+use std::error::Error;
+use std::fmt;
 
 
 struct DALIcmd
@@ -38,13 +39,32 @@ struct DALIreq
 
 pub struct Helvar510driver
 {
-    join: Option<JoinHandle<u32>>,
+    join: Option<JoinHandle<DriverError>>,
     sender: Option<mpsc::SyncSender<Arc<DALIreq>>>
 }
 
-fn driver_thread(rx: mpsc::Receiver<Arc<DALIreq>>) -> u32
+#[derive(Debug,Clone)]
+enum DriverError
 {
-    let api = hidapi::HidApi::new().unwrap();
+    OK,
+    OpenFailed,
+    NoInterfaceFound,
+    CommandError
+}
+
+impl Error for DriverError
+{
+}
+
+impl fmt::Display for DriverError
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "No error")
+    }
+}
+
+fn driver_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>) -> DriverError {
+       let api = hidapi::HidApi::new().unwrap();
     // Print out information about all connected devices
     let mut device: Option<HidDevice> = None;
     for info in api.devices() {
@@ -59,14 +79,24 @@ fn driver_thread(rx: mpsc::Receiver<Arc<DALIreq>>) -> u32
 			device = Some(d);
 		    }
 		    
-		    Err(e) => panic!("Failed to open HID device: {}",e)
+		    Err(e) => {
+                        println!("Failed to open HID device: {}",e);
+                        return DriverError::OpenFailed;
+                    }
+                            
 		}
 		break
 	    },
 	    _ => {}
         }	  	   
     }
-    let device = device.expect("No encoder found");
+    let device = match device {
+        Some(d) => d,
+        None => {
+            println!("No device found");
+            return DriverError::NoInterfaceFound;
+        }
+    };
     device.set_blocking_mode(true).unwrap();
     
     let send = [2, 0x82, 0x04];
@@ -105,7 +135,7 @@ fn driver_thread(rx: mpsc::Receiver<Arc<DALIreq>>) -> u32
                     //println!("Read done: {}",res);
                     if res > 0 {
                         if res == 0x24 {
-                            let msglen:usize = buf[0] as usize;
+                            //let msglen:usize = buf[0] as usize;
                             //println!("Read msg: {}", &buf[1..(msglen+1)].iter().map(|x| format!("{:02x}",x)).collect::<Vec<String>>().join(" "));
                             let mut reply = req.reply.lock().unwrap();
                             match (&buf[0..2], 
@@ -124,7 +154,8 @@ fn driver_thread(rx: mpsc::Receiver<Arc<DALIreq>>) -> u32
                                     reply.err = DALIcommandError::Timeout;
                                 },
                                 _ => {
-                                    reply.err = DALIcommandError::DriverError(1);
+                                    let err = Arc::new(DriverError::CommandError);
+                                    reply.err = DALIcommandError::DriverError(err);
                                 }
                             };
                             let mut waker = req.waker.lock().unwrap();
@@ -144,8 +175,31 @@ fn driver_thread(rx: mpsc::Receiver<Arc<DALIreq>>) -> u32
         };
         
     };
-    0
+    return DriverError::OK;
+
 }
+    
+fn driver_thread(mut rx: mpsc::Receiver<Arc<DALIreq>>) -> DriverError
+{
+    
+    let res = driver_engine(&mut rx);
+    loop {
+        match rx.try_recv() {
+            Ok(ref req) => {
+                let mut reply = req.reply.lock().unwrap();
+                reply.err = DALIcommandError::DriverError(Arc::new(res.clone()));
+                let mut waker = req.waker.lock().unwrap();
+                match waker.take() {
+                    Some(w) => {w.wake();},
+                    _ => {}
+                }
+            },
+            _ => break
+        }
+    }
+    res
+}
+   
 
 impl Helvar510driver
 {
@@ -200,7 +254,7 @@ impl Future for ResultFeature
                 futures::task::Poll::Ready(Ok(reply.data[0]))
             },
             err => {
-                futures::task::Poll::Ready(Err(*err))
+                futures::task::Poll::Ready(Err(err.clone()))
             }
         }
     }
@@ -210,7 +264,7 @@ impl Future for ResultFeature
 impl DALIdriver for Helvar510driver
 {
     fn send_command(&mut self, cmd: &[u8;2], flags:u16) -> 
-        Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Unpin>>
+        Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>
     {
         let req = DALIreq{cmd: DALIcmd 
                           {
@@ -227,7 +281,7 @@ impl DALIdriver for Helvar510driver
         let req_ref = Arc::new(req);
         
         self.sender.as_ref().unwrap().send(req_ref.clone()).expect("Failed to send DALI request");
-        Pin::new(Box::new(ResultFeature::new(req_ref)))
+        Box::pin(ResultFeature::new(req_ref))
         
     }
 }

@@ -12,3 +12,8 @@ pub mod drivers {
     }
 }
 
+pub mod defs {
+    pub mod gear {
+        pub mod cmd;
+    }
+}

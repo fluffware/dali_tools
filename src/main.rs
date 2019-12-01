@@ -1,7 +1,7 @@
 use dali_tools as dali;
 use dali::drivers::driver::{self,DALIdriver,DALIcommandError};
 use dali::drivers::helvar::helvar510::Helvar510driver;
-
+use dali::defs::gear::cmd;
 use futures::executor::block_on;
 
 
@@ -15,17 +15,19 @@ async fn set_search_addr(driver: &mut dyn DALIdriver,
 {
     let diff = addr ^ *current;
     if (diff & 0xff0000) != 0 {
-        let res = driver.send_command(&[0xb1, (addr>>16 & 0xff) as u8],
+        let res = driver.send_command(&[cmd::SEARCHADDRH,
+                                        (addr>>16 & 0xff) as u8],
                                       driver::PRIORITY_1);
         res.await?;
     }
     if (diff & 0x00ff00) != 0 {
-        let res = driver.send_command(&[0xb3, (addr>>8 & 0xff) as u8], 
+        let res = driver.send_command(&[cmd::SEARCHADDRM,
+                                        (addr>>8 & 0xff) as u8], 
                                       driver::PRIORITY_1);
         res.await?;
     }
     if (diff & 0x0000ff) != 0 {
-        let res = driver.send_command(&[0xb5, (addr & 0xff) as u8],
+        let res = driver.send_command(&[cmd::SEARCHADDRL, (addr & 0xff) as u8],
                                       driver::PRIORITY_1);
         res.await?;
     }
@@ -61,7 +63,7 @@ async fn find_device(driver: &mut dyn DALIdriver, mut low: u32, mut high: u32,
     loop {
         set_search_addr(driver, pivot, current_search_addr).await?;
         // COMPARE
-        let res = driver.send_command(&[0xa9, 0x00], 
+        let res = driver.send_command(&[cmd::COMPARE, 0x00], 
                                       driver::PRIORITY_1|driver::EXPECT_ANSWER);
         match res.await {
             Ok(0xff) => {
@@ -123,7 +125,7 @@ async fn find_devices(driver: &mut dyn DALIdriver)
 {
     let mut current_search_addr = 0x010101;
     // INITILISE all
-    let res = driver.send_command(&[0xa5, 0x00], 
+    let res = driver.send_command(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
                                   driver::PRIORITY_2|driver::SEND_TWICE);
     if let Err(e) = res.await {
         return Err(e);
@@ -152,8 +154,10 @@ async fn find_devices(driver: &mut dyn DALIdriver)
                                               | driver::EXPECT_ANSWER);
                 match res.await {
                     Ok(short_addr) => {
-                        println!("Found device 0x{:06x} with short address {}",addr, short_addr);
-                        let res = driver.send_command(&[0xab, 0x00], driver::PRIORITY_1);
+                        println!("Found device 0x{:06x} with short address {}",
+                                 addr, short_addr);
+                        let res = driver.send_command(&[cmd::WITHDRAW, 0x00],
+                                                      driver::PRIORITY_1);
                         let _ = res.await?;
                         if high_single < low_multiple {
                             low = high_single;
@@ -192,7 +196,7 @@ async fn find_devices(driver: &mut dyn DALIdriver)
     println!("Search terminated: {:?}", search_res);
     println!("Next: {:06x} - {:06x}", high_single, low_multiple);
     // TERMINATE
-    let res = driver.send_command(&[0xa1, 0x00], driver::PRIORITY_1);
+    let res = driver.send_command(&[cmd::TERMINATE, 0x00], driver::PRIORITY_1);
     let _ = res.await?;
     Ok(0)
 }

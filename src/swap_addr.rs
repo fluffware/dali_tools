@@ -72,10 +72,10 @@ async fn swap_addr(driver: &mut dyn DALIdriver, addr1:u8, addr2:u8)
     driver.send_command(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
                         driver::SEND_TWICE).await?;
     if let Some(l) = long1 {
-        program_short_address(driver, l, addr2).await;
+        program_short_address(driver, l, addr2).await?;
     }
     if let Some(l) = long2 {
-        program_short_address(driver, l, addr1).await;
+        program_short_address(driver, l, addr1).await?;
     }
     driver.send_command(&[cmd::TERMINATE, 0], 0).await?;
     Ok(())

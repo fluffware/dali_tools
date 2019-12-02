@@ -29,7 +29,7 @@ async fn query_long_addr(driver: &mut dyn DALIdriver, short_addr: u8)
 {
     let hq = driver.send_command(&[short_addr<<1 | 1, 
                                    cmd::QUERY_RANDOM_ADDRESS_H],
-                                   driver::EXPECT_ANSWER);
+                                 driver::EXPECT_ANSWER);
     let mq = driver.send_command(&[short_addr<<1 | 1, 
                                    cmd::QUERY_RANDOM_ADDRESS_M],
                                  driver::EXPECT_ANSWER);

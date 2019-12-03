@@ -1,5 +1,5 @@
 pub mod base {
-    mod address;
+    pub mod address;
 }
 
 pub mod drivers {
@@ -10,12 +10,15 @@ pub mod drivers {
     }
     pub mod simulator {
         pub mod simulator;
+        pub mod device;
+        pub mod gear;
         #[cfg(test)]
         mod test;
     }
 }
 
 pub mod defs {
+    pub mod common;
     pub mod gear {
         pub mod cmd;
     }

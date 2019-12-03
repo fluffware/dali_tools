@@ -3,11 +3,18 @@ use dali::drivers::driver::{self,DALIdriver,DALIcommandError};
 use dali::drivers::helvar::helvar510::Helvar510driver;
 use dali::defs::gear::cmd;
 use futures::executor::block_on;
+use dali::base::address::Short;
+use dali::base::address::Long;
+use dali::base::address::BusAddress;
+use std::boxed::Box;
+use std::pin::Pin;
+use futures::future::Future;
+
 
 #[macro_use]
 extern crate clap;
 
-async fn set_search_addr(driver: &mut dyn DALIdriver, addr: u32)
+async fn set_search_addr(driver: &mut dyn DALIdriver, addr: Long)
                          -> Result<u8, DALIcommandError>
 {
     let res = driver.send_command(&[cmd::SEARCHADDRH,
@@ -24,37 +31,43 @@ async fn set_search_addr(driver: &mut dyn DALIdriver, addr: u32)
     Ok(0)
 }
 
-async fn query_long_addr(driver: &mut dyn DALIdriver, short_addr: u8)
-    -> Result<u32, DALIcommandError>
+fn send_device_cmd(driver: &mut dyn DALIdriver, addr: & dyn BusAddress,
+                   cmd: u8, flags: u16)
+    -> Pin<Box<dyn Future<Output = std::result::Result<u8, DALIcommandError>> + Send>>
 {
-    let hq = driver.send_command(&[short_addr<<1 | 1, 
-                                   cmd::QUERY_RANDOM_ADDRESS_H],
-                                 driver::EXPECT_ANSWER);
-    let mq = driver.send_command(&[short_addr<<1 | 1, 
-                                   cmd::QUERY_RANDOM_ADDRESS_M],
-                                 driver::EXPECT_ANSWER);
-    let lq = driver.send_command(&[short_addr<<1 | 1, 
-                                   cmd::QUERY_RANDOM_ADDRESS_L],
-                                 driver::EXPECT_ANSWER);
+    driver.send_command(&[addr.bus_address() | 1, cmd], flags)
+}
+
+async fn query_long_addr(driver: &mut dyn DALIdriver, short_addr: Short)
+    -> Result<Long, DALIcommandError>
+{
+    let hq = send_device_cmd(driver, &short_addr, cmd::QUERY_RANDOM_ADDRESS_H,
+                             driver::EXPECT_ANSWER);
+    let mq = send_device_cmd(driver, &short_addr, cmd::QUERY_RANDOM_ADDRESS_M,
+                             driver::EXPECT_ANSWER);
+    let lq = send_device_cmd(driver, &short_addr, 
+                             cmd::QUERY_RANDOM_ADDRESS_L,
+                             driver::EXPECT_ANSWER);
     let h = hq.await?;
     let m = mq.await?;
     let l = lq.await?;
     Ok((h as u32)<<16 | (m as u32)<<8 | (l as u32))
 }
 
-async fn program_short_address(driver: &mut dyn DALIdriver, long: u32, short: u8)
+async fn program_short_address(driver: &mut dyn DALIdriver, 
+                               long: Long, short: Short)
     -> Result<(), DALIcommandError>
 {
     set_search_addr(driver, long).await?;
     driver.send_command(&[cmd::PROGRAM_SHORT_ADDRESS,
-                          (short <<1) | 1], 0).await?;
+                          short.bus_address() | 1], 0).await?;
     let a = driver.send_command(&[cmd::QUERY_SHORT_ADDRESS,0x00], 
                                 driver::EXPECT_ANSWER).await?;
-    println!("Set {}, got {}", short, a>>1);
+    println!("Set {}, got {}", short, a+1);
     Ok(())
 }
 
-async fn swap_addr(driver: &mut dyn DALIdriver, addr1:u8, addr2:u8)
+async fn swap_addr(driver: &mut dyn DALIdriver, addr1:Short, addr2:Short)
     -> Result<(), DALIcommandError>
 {
     let long1 = match query_long_addr(driver, addr1).await {
@@ -89,7 +102,7 @@ fn main() {
     ).get_matches();
     
     let addr1 = match u8::from_str_radix(matches.value_of("ADDR1").unwrap(),10){
-        Ok(x) if x >= 1 && x <= 64 => x-1,
+        Ok(x) if x >= 1 && x <= 64 => Short::new(x),
         Ok(_) => {
             println!("First address out of range");
             return
@@ -101,13 +114,13 @@ fn main() {
     };
     
     let addr2 = match u8::from_str_radix(matches.value_of("ADDR2").unwrap(),10){
-        Ok(x) if x >= 1 && x <= 64 => x-1,
+        Ok(x) if x >= 1 && x <= 64 => Short::new(x),
         Ok(_) => {
-            println!("First address out of range");
+            println!("Second address out of range");
             return
         }
         Err(e) => {
-            println!("First address invalid: {}",e);
+            println!("Second address invalid: {}",e);
             return
         }
     };

@@ -158,7 +158,16 @@ impl BusAddress for Short
         (self.0 - 1) << 1
     }
 }
-    
+
+impl std::fmt::Display for Short
+{
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) 
+           -> std::result::Result<(), std::fmt::Error>
+    {
+        self.0.fmt(fmt)
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct Group(u8);
 
@@ -209,6 +218,15 @@ impl BusAddress for Group
     fn bus_address(&self) ->u8
     {
         ((self.0 - 1) << 1) | 0x80
+    }
+}
+    
+impl std::fmt::Display for Group
+{
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) 
+           -> std::result::Result<(), std::fmt::Error>
+    {
+        self.0.fmt(fmt)
     }
 }
 

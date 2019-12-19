@@ -1,7 +1,14 @@
-use super::super::driver::{self,DALIdriver, DALIcommandError};
+use super::super::driver::{DALIdriver, DALIcommandError};
 use futures::future::{Future, FutureExt};
 use std::pin::Pin;
-use futures_locks::Mutex;
+use futures::lock::Mutex;
+use std::sync::Arc;
+
+#[derive(Debug,Clone)]
+enum SimDriverError
+{
+    OK
+}
 
 struct DALIsimCtxt
 {
@@ -9,22 +16,24 @@ struct DALIsimCtxt
 
 pub struct DALIsim
 {
-    ctxt: Mutex<DALIsimCtxt>
+    ctxt: Arc<Mutex<DALIsimCtxt>>
 }
+
 
 impl DALIsim
 {
     pub fn new() -> DALIsim
     {
-        DALIsim{ctxt: Mutex::new(DALIsimCtxt{})}
+        DALIsim{ctxt: Arc::new(Mutex::new(DALIsimCtxt{}))}
     }
 }
 
-async fn sim_driver(driver: Mutex<DALIsimCtxt>, cmd: [u8;2], flags:u16)
+async fn sim_driver(_driver: Arc<Mutex<DALIsimCtxt>>, _cmd: [u8;2], _flags:u16)
     -> Result<u8, DALIcommandError>
 {
     Ok(0)
 }
+
 
 impl DALIdriver for DALIsim
 {

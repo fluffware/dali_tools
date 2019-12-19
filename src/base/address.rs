@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-use std::convert::TryInto;
 
 pub trait BusAddress
 {
@@ -99,7 +97,7 @@ impl BusAddress for Address
 {
     fn bus_address(&self) ->u8
     {
-        match(self) {
+        match self {
             Address::Short(a) => a.bus_address(),
             Address::Group(a) => a.bus_address(),
             Address::Broadcast => 0xfe
@@ -232,27 +230,30 @@ impl std::fmt::Display for Group
 
 pub type Long = u32;
 
+#[cfg(test)]
+use std::convert::TryFrom;
+
 #[test]
 fn short_address_test()
 {
-    let a:Short = 1.try_into().unwrap();
+    let a:Short = Short::new(1);
     let b:Address = a.into();
     assert_eq!(b, Short::new(1));
     assert_eq!(b, Address::from_bus_address(0x00).unwrap());
     
-    let a = Short::try_from(64).unwrap();
+    let a = Short::new(64);
     let b:Address = a.into();
     assert_eq!(b, Short::new(64));
     assert_eq!(b, Address::from_bus_address(0x3f<<1).unwrap());
     
     let a = Short::try_from(b).unwrap();
-    assert_eq!(a, Short(64));
+    assert_eq!(a, Short::new(64));
 }
 
 #[test]
 fn group_address_test()
 {
-    let a:Group = 1.try_into().unwrap();
+    let a:Group = Group::new(1);
     let b:Address = a.into();
     assert_eq!(b, Group::new(1));
     assert_eq!(b, Address::from_bus_address(0x80).unwrap());

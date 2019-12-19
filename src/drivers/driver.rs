@@ -4,6 +4,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::fmt;
 use std::ops::Deref;
+use crate::base::address::BusAddress;
 
 pub const PRIORITY_1:u16 = 0x00;
 pub const PRIORITY_2:u16 = 0x01;
@@ -48,8 +49,15 @@ impl fmt::Display for DALIcommandError
 }
 
 
-pub trait DALIdriver
+pub trait DALIdriver: Send
 {
     fn send_command(&mut self, cmd: &[u8;2], flags:u16) -> 
         Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>;
+
+    fn send_device_cmd(&mut self, addr: &dyn BusAddress, cmd: u8, flags:u16) -> 
+        Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>
+    {
+        self.send_command(&[addr.bus_address() | 1, cmd], flags)
+    }
+
 }

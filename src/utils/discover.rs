@@ -153,7 +153,7 @@ pub async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
     let mut low_multiple = TOP_SEARCH_ADDR;
 
     let search_res: Result<u32,Box<dyn Error + Send>> = loop {
-        //println!("Searching {:06x} - {:06x}", low, high); 
+        println!("Searching {:06x} - {:06x}", low, high); 
         match find_device(driver, low, high,
                           &mut high_single, &mut low_multiple,
                           &mut current_search_addr).await {
@@ -163,9 +163,14 @@ pub async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                                               | driver::EXPECT_ANSWER);
                 match res.await {
                     Ok(short_addr) => {
+                        let short = if short_addr == 0xff {
+                            None
+                        } else {
+                            Some(Short::new((short_addr>>1) + 1))
+                        };
                         let msg = Ok(Discovered{
                             long:Some(addr),
-                            short:Some(Short::new((short_addr>>1) + 1)),
+                            short: short,
                             long_conflict: false, 
                             short_conflict: false
                         });
@@ -294,6 +299,8 @@ async fn discover_async(d: &mut dyn DALIdriver,
     };
 
     let mut current_search_addr = 0xffffffff;
+
+    // WITHDRAW all devices with a short address
     for index in 0..64usize {
         if let Some(l) = found_short[index] {
             match long_address::set_search_addr_changed(d,l, 
@@ -316,7 +323,7 @@ async fn discover_async(d: &mut dyn DALIdriver,
     Ok(())
 }
 
-type DiscoverItem = Result<Discovered, Box<dyn Error + Send>>;
+pub type DiscoverItem = Result<Discovered, Box<dyn Error + Send>>;
 fn discover_thread(mut tx: futures::channel::mpsc::Sender<DiscoverItem>,
                    driver: Arc<Mutex<dyn DALIdriver>>)
 {

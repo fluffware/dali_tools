@@ -1,6 +1,6 @@
 extern crate hidapi;
 use std::sync::Arc;
-use futures::lock::Mutex;
+use std::sync::Mutex;
 use std::pin::Pin;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
@@ -8,14 +8,13 @@ use std::thread::JoinHandle;
 use std::thread;
 use std::time::Duration;
 use futures::future::Future;
-use futures::executor::block_on;
 
 use hidapi::HidDevice;
 use hidapi::HidDeviceInfo;
 //use hidapi::HidError;
 
 use super::super::driver::{self,DALIdriver, DALIcommandError};
-use super::super::utils::{DALIreq, DALIcmd, DALIreply};
+use super::super::utils::{DALIreq, DALIcmd, DALIreply,DALIResultFuture};
 use std::error::Error;
 use std::fmt;
 
@@ -119,7 +118,7 @@ fn driver_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>) -> DriverError {
                         if res == 0x24 {
                             //let msglen:usize = buf[0] as usize;
                             //println!("Read msg: {}", &buf[1..(msglen+1)].iter().map(|x| format!("{:02x}",x)).collect::<Vec<String>>().join(" "));
-                            let mut reply = block_on(req.reply.lock());
+                            let mut reply = req.reply.lock().unwrap();
                             match (&buf[0..2], 
                                    (req.cmd.flags & driver::EXPECT_ANSWER) != 0) {
                                 (&[1,0x64], false) => {
@@ -140,7 +139,7 @@ fn driver_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>) -> DriverError {
                                     reply.err = DALIcommandError::DriverError(err);
                                 }
                             };
-                            let mut waker = block_on(req.waker.lock());
+                            let mut waker = req.waker.lock().unwrap();
                             match waker.take() {
                                 Some(w) => w.wake(),
                                 _ => {}
@@ -168,9 +167,9 @@ fn driver_thread(mut rx: mpsc::Receiver<Arc<DALIreq>>) -> DriverError
     loop {
         match rx.try_recv() {
             Ok(ref req) => {
-                let mut reply = block_on(req.reply.lock());
+                let mut reply = req.reply.lock().unwrap();
                 reply.err = DALIcommandError::DriverError(Arc::new(res.clone()));
-                let mut waker = block_on(req.waker.lock());
+                let mut waker = req.waker.lock().unwrap();
                 match waker.take() {
                     Some(w) => {w.wake();},
                     _ => {}
@@ -208,42 +207,6 @@ impl Drop for Helvar510driver
     }
 }
 
-struct ResultFuture
-{
-    req: Arc<DALIreq>
-}
-
-impl ResultFuture
-{
-    fn new(req: Arc<DALIreq>) -> ResultFuture {
-        ResultFuture{req: req}
-    }
-}
-
-impl Future for ResultFuture
-{
-    type Output = Result<u8, DALIcommandError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut futures::task::Context)
-            ->futures::task::Poll<Self::Output>
-    {
-
-        let mut waker = block_on(self.req.waker.lock());
-        *waker = Some(cx.waker().clone());
-        let reply = match self.req.reply.try_lock() {
-            Some(r) => r,
-            None => return futures::task::Poll::Pending
-        };
-        match &reply.err {
-            DALIcommandError::Pending => futures::task::Poll::Pending,
-            DALIcommandError::OK => {
-                futures::task::Poll::Ready(Ok(reply.data[0]))
-            },
-            err => {
-                futures::task::Poll::Ready(Err(err.clone()))
-            }
-        }
-    }
-}
                           
 
 impl DALIdriver for Helvar510driver
@@ -266,7 +229,7 @@ impl DALIdriver for Helvar510driver
         let req_ref = Arc::new(req);
         
         self.sender.as_ref().unwrap().send(req_ref.clone()).expect("Failed to send DALI request");
-        Box::pin(ResultFuture::new(req_ref))
+        Box::pin(DALIResultFuture::new(req_ref))
         
     }
 }

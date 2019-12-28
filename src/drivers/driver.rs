@@ -61,3 +61,6 @@ pub trait DALIdriver: Send
     }
 
 }
+
+pub const YES: Result<u8, DALIcommandError> = Ok(0xff);
+pub const NO: Result<u8, DALIcommandError> = Err(DALIcommandError::Timeout);

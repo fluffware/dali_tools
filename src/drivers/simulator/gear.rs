@@ -1,6 +1,13 @@
 use super::device::DALIsimDevice;
 use crate::drivers::driver::DALIcommandError;
-use crate::defs::common::MASK;    
+use crate::defs::common::MASK;
+use crate::defs::gear::cmd;
+use crate::drivers::driver;
+
+extern crate rand;
+use rand::Rng;
+
+#[derive(PartialEq)]
 pub enum InitialisationState
 {
     ENABLED,
@@ -8,6 +15,7 @@ pub enum InitialisationState
     WITHDRAWN
 }
 
+#[derive(PartialEq)]
 pub enum WriteEnableState
 {
     ENABLED,
@@ -45,7 +53,7 @@ pub struct DALIsimGear
 
 impl DALIsimGear
 {
-    fn new() -> DALIsimGear
+    pub fn new() -> DALIsimGear
     {
         let phm = 0x01;
         DALIsimGear{
@@ -78,6 +86,115 @@ impl DALIsimGear
     }
 }
 
+fn device_cmd(_dev: &mut DALIsimGear, _addr: u8, _cmd: u8, _flags: u16) 
+              ->Result<u8, DALIcommandError>
+{
+    Err(DALIcommandError::Timeout)
+}
+
+fn special_cmd(dev: &mut DALIsimGear, cmd: u8, data: u8, flags: u16) 
+              ->Result<u8, DALIcommandError>
+{
+    //eprintln!("Special cmd: {:02x}", cmd);
+    match cmd {
+        cmd::TERMINATE => {
+            dev.initialisation_state = InitialisationState::DISABLED;
+            // TODO stop identification
+            driver::NO
+        },
+        cmd::INITIALISE if flags & driver::SEND_TWICE != 0=> {
+            if (((data & 0x81) == 0x01) 
+                && (data >> 1) == dev.short_address)
+                || (data == 0xff && dev.short_address == MASK)
+                || data == 0x00
+            {
+                // TODO restart initialisation timer 
+                dev.initialisation_state = InitialisationState::ENABLED;
+            }
+            
+            driver::NO
+        },
+        cmd::RANDOMISE if flags & driver::SEND_TWICE != 0=> {
+            if dev.initialisation_state != InitialisationState::DISABLED {
+                dev.random_address = rand::thread_rng().gen_range(0, 0xffffff);
+            }
+            driver::NO
+        },
+        cmd::COMPARE => {
+            if dev.initialisation_state == InitialisationState::ENABLED
+                && dev.random_address <= dev.search_address {
+                    driver::YES
+                } else {
+                    driver::NO
+                }
+        },
+        cmd::WITHDRAW => {
+             if dev.initialisation_state == InitialisationState::ENABLED
+                && dev.random_address == dev.search_address {
+                    dev.initialisation_state = InitialisationState::WITHDRAWN; 
+                }
+            driver::NO
+        },
+        cmd::SEARCHADDRH => {
+            if dev.initialisation_state != InitialisationState::DISABLED {
+                dev.search_address =
+                    (dev.search_address & 0x00ffff) | ((data as u32) << 16);
+            }
+            driver::NO
+        },
+        cmd::SEARCHADDRM => {
+            if dev.initialisation_state != InitialisationState::DISABLED {
+                dev.search_address =
+                    (dev.search_address & 0xff00ff) | ((data as u32) << 8);
+            }
+            driver::NO
+        },
+        cmd::SEARCHADDRL => {
+            if dev.initialisation_state != InitialisationState::DISABLED {
+                dev.search_address =
+                    (dev.search_address & 0xffff00) | (data as u32);
+            }
+            driver::NO
+        },
+        
+        cmd::PROGRAM_SHORT_ADDRESS => {
+            if dev.initialisation_state != InitialisationState::DISABLED {
+                if (data & 0x81) == 0x01 {
+                    dev.short_address = data>>1;
+                } else if data == MASK {
+                    dev.short_address = MASK;
+                }
+            }
+            driver::NO            
+        },
+        cmd::QUERY_SHORT_ADDRESS => {
+            if dev.initialisation_state != InitialisationState::DISABLED
+                && dev.search_address == dev.random_address {
+                    eprintln!("Query_Short_Address: {}", dev.short_address);
+                    Ok((dev.short_address<<1) | 0x01)
+                } else {
+                    driver::NO            
+                }
+        },
+        cmd::DTR0 => {
+            dev.dtr0 = data;
+            driver::NO
+        },
+        cmd::DTR1 => {
+            dev.dtr1 = data;
+            driver::NO
+        },
+        cmd::DTR2 => {
+            dev.dtr2 = data;
+            driver::NO
+        },
+        
+        _ => {
+            driver::NO
+        }
+    }
+}
+
 impl DALIsimDevice for DALIsimGear
 {
     fn power(&mut self, on: bool)
@@ -85,23 +202,29 @@ impl DALIsimDevice for DALIsimGear
         self.powered = on;
     }
     
-    fn forward16(&mut self, cmd: [u8;2], _flags:u16) 
+    fn forward16(&mut self, cmd: &[u8], flags:u16) 
                  ->Result<u8, DALIcommandError>
     {
-        let addr = cmd[0] >> 1;
-        let addr_match;
-        if addr < 64 {
-            addr_match = addr == self.short_address;
-        } else if addr >= 0x40 && addr < 0x50 {
-            addr_match = self.gear_groups & (1<<(addr & 0x0f)) != 0;
-        } else if addr == 0x7f {
-            addr_match = true;
-        } else {
-            addr_match = false;
-        }
-        let _ = addr_match;
-        Err(DALIcommandError::Timeout)
+        /*eprintln!("Gear {} received: {:02x} {:02x}", self.short_address,
+                  cmd[0], cmd[1]);*/
+        match cmd[0] >> 1 {
+            addr @ 0x00..=0x3f => {
+                if addr == self.short_address {
+                    return device_cmd(self, cmd[0], cmd[1], flags);
+                }
+            },
+            addr @ 0x40..=0x4f => {
+                if self.gear_groups & (1<<(addr & 0x0f)) != 0 {
+                    return device_cmd(self, cmd[0], cmd[1], flags);
+                }
+            },
+            0x7f => {
+                return device_cmd(self, cmd[0], cmd[1], flags);
+            },
+            _ => {
+                return special_cmd(self, cmd[0], cmd[1], flags);
+            }
+        };
+        driver::NO
     }
-
-    
 }

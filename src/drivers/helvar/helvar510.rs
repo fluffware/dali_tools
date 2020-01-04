@@ -74,7 +74,7 @@ fn driver_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>) -> DriverError {
     let device = match device {
         Some(d) => d,
         None => {
-            println!("No device found");
+            //println!("No device found");
             return DriverError::NoInterfaceFound;
         }
     };
@@ -228,7 +228,12 @@ impl DALIdriver for Helvar510driver
         };
         let req_ref = Arc::new(req);
         
-        self.sender.as_ref().unwrap().send(req_ref.clone()).expect("Failed to send DALI request");
+        match self.sender.as_ref().unwrap().send(req_ref.clone()) {
+            Ok(_) => {},
+            Err(_) => {
+                return Box::pin(futures::future::err(DALIcommandError::DriverError(Arc::new(DriverError::CommandError))))
+            }
+        }
         Box::pin(DALIResultFuture::new(req_ref))
         
     }

@@ -81,39 +81,33 @@ fn discover()
 {
     let sim = simulator::DALIsim::new();
 
-    let mut dev = gear::DALIsimGear::new();
-    dev.random_address = 0x000000;
-    sim.add_device(Box::new(dev));
-    
-    let mut dev = gear::DALIsimGear::new();
-    dev.random_address = 0x000001;
-    sim.add_device(Box::new(dev));
+    let addrs = [0,1,0x123456, 0x123457,  0xfffffd, 0xfffffe, 0xffffff];
 
-    
-    let mut dev = gear::DALIsimGear::new();
-    dev.random_address = 0x123456;
-    sim.add_device(Box::new(dev));
+    for a in &addrs {
+        let mut dev = gear::DALIsimGear::new();
+        dev.random_address = *a;
+        sim.add_device(Box::new(dev));
+    }
     
     let mut dev = gear::DALIsimGear::new();
     dev.random_address = 0x123457;
     sim.add_device(Box::new(dev));
-    
-    let mut dev = gear::DALIsimGear::new();
-    dev.random_address = 0x123457;
-    sim.add_device(Box::new(dev));
-    
-    let mut dev = gear::DALIsimGear::new();
-    dev.random_address = 0xfffffd;
-    sim.add_device(Box::new(dev));
-    
-    let mut dev = gear::DALIsimGear::new();
-    dev.random_address = 0xfffffe;
-    sim.add_device(Box::new(dev));
 
-    
     let sim = Arc::new(Mutex::new(sim));
     let v = block_on(discover::find_quick(sim).collect::<Vec<DiscoverItem>>());
-    println!("{:?}",v);
+    for i in 0..v.len() {
+        match &v[i] {
+            Ok(d) => {
+                if d.long != Some(addrs[i]) {
+                    panic!("Address {:02x} found, expected {:06x}",
+                           d.long.unwrap(), addrs[i]);
+                }
+            },
+            Err(e) => panic!("Discovery failed: {}", e)
+        }
+    }
+
+    assert_eq!(v[3].as_ref().unwrap().long_conflict, true);
 }
 
 #[test]

@@ -4,6 +4,8 @@ use crate::defs::common::MASK;
 use crate::defs::gear::cmd;
 use crate::defs::gear::status;
 use crate::drivers::driver;
+use std::time::Instant;
+use std::time::Duration;
 
 extern crate rand;
 use rand::Rng;
@@ -49,7 +51,18 @@ pub struct DALIsimGear
     pub dtr0: u8,
     pub dtr1: u8,
     pub dtr2: u8,
-    pub phm: u8
+    pub phm: u8,
+
+    // Fade endpoints. Scaled for better precision.
+    // Scaled by 128
+    fade_start_level: i16,
+    // Scaled by 128
+    fade_end_level: i16,
+    
+    // Timers            
+    fade_start_time: Instant,
+    fade_duration: Duration,
+    init_start_time: Instant,
 }
 
 impl DALIsimGear
@@ -82,9 +95,103 @@ impl DALIsimGear
             dtr0: 0,
             dtr1: 0,
             dtr2: 0,
-            phm: 0
+            phm: 0,
+
+            fade_start_level: 0,
+            // Scaled by 128
+            fade_end_level: 0,
+            
+            fade_start_time: Instant::now(),
+            fade_duration: Duration::new(0,0),
+            init_start_time: Instant::now(),
+                
         }
     }
+}
+
+const INIT_TIMEOUT: Duration = Duration::from_secs(15*60);
+
+fn check_timers(dev: &mut DALIsimGear)
+{
+    if dev.initialisation_state != InitialisationState::DISABLED {
+        if dev.init_start_time.elapsed() >= INIT_TIMEOUT {
+            dev.initialisation_state = InitialisationState::DISABLED;
+        }
+    }
+    
+    if  (dev.status & status::FADE_RUNNING) != 0 {
+        let elapsed = dev.fade_start_time.elapsed();
+        if elapsed >=  dev.fade_duration {
+            dev.actual_level = dev.target_level;
+            dev.status &= !status::FADE_RUNNING;
+        } else {
+            let elapsed_millis = elapsed.as_millis() as i128;
+            let duration_millis = dev.fade_duration.as_millis() as i128;
+            dev.actual_level = 
+                ((dev.fade_start_level 
+                 + (((dev.fade_end_level - dev.fade_start_level) as i128 
+                     * elapsed_millis + duration_millis/2) 
+                                   / duration_millis) as i16) >> 7) as u8;
+        }
+    }
+}
+
+const fn fade_time(n: u8) -> Duration
+{
+    let n = n as u64;
+    let millis = (1u64<<(n/2)) * ((n&1) * 707 + (1-(n&1)) * 500);
+    Duration::from_millis(millis)
+}
+
+const FADE_TIMES: [Duration;16] = [
+    Duration::from_millis(0),
+    fade_time(1),
+    fade_time(2),
+    fade_time(3),
+    fade_time(4),
+    fade_time(5),
+    fade_time(6),
+    fade_time(7),
+    fade_time(8),
+    fade_time(9),
+    fade_time(10),
+    fade_time(11),
+    fade_time(12),
+    fade_time(13),
+    fade_time(14),
+    fade_time(15)
+];
+
+const FADE_MULTIPLIER : [Duration;5] = [
+    Duration::from_millis(0),
+    Duration::from_millis(100),
+    Duration::from_secs(1),
+    Duration::from_secs(10),
+    Duration::from_secs(60)
+];
+    
+fn start_fade_time(dev: &mut DALIsimGear)
+{
+    if (dev.fade & 0xf0) == 0x00 && (dev.extended_fade_time & 0x70) == 0x00 {
+        dev.actual_level = dev.target_level;
+        return;
+    } else {
+        if (dev.fade & 0xf0) == 0x0 {
+            if dev.extended_fade_time == 0 || dev.extended_fade_time > 0x4f {
+                dev.actual_level = dev.target_level;
+                return;
+            } else {
+                dev.fade_duration = 
+                    FADE_MULTIPLIER[dev.extended_fade_time as usize>>4] 
+                    * ((dev.extended_fade_time & 0x0f) +1) as u32;
+            }
+        } else {
+            dev.fade_duration = FADE_TIMES[dev.fade as usize >> 4];
+        }
+    }
+    dev.fade_start_time = Instant::now();
+    dev.fade_start_level = (dev.actual_level as i16) << 7;
+    dev.fade_end_level = (dev.target_level as i16) << 7;
 }
 fn query_status_flag(dev: &DALIsimGear, flag: u8)
                      ->Result<u8, DALIcommandError>

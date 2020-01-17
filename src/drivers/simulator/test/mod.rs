@@ -6,6 +6,7 @@ use dali::drivers::driver::DALIdriver;
 use dali::utils::long_address;
 use dali::drivers::driver::{self, DALIcommandError};
 use dali::defs::gear::cmd;
+use dali::defs::gear::status;
 use dali::utils::discover::{self, DiscoverItem};
 use std::sync::{Arc,Mutex};
 use futures::stream::StreamExt;
@@ -78,7 +79,7 @@ fn add_sim_device()
 #[test]
 fn discover()
 {
-    let mut sim = simulator::DALIsim::new();
+    let sim = simulator::DALIsim::new();
 
     let mut dev = gear::DALIsimGear::new();
     dev.random_address = 0x000000;
@@ -113,4 +114,43 @@ fn discover()
     let sim = Arc::new(Mutex::new(sim));
     let v = block_on(discover::find_quick(sim).collect::<Vec<DiscoverItem>>());
     println!("{:?}",v);
+}
+
+#[test]
+fn test_queries()
+{
+    let mut sim = simulator::DALIsim::new();
+    
+    let mut dev = gear::DALIsimGear::new();
+    dev.random_address = 0x123456;
+    dev.short_address = 3;
+    dev.status = 0;
+    sim.add_device(Box::new(dev));
+
+    assert_eq!(block_on(sim.send_command(&[3<<1, cmd::QUERY_STATUS], 
+                                         driver::EXPECT_ANSWER)).unwrap(),
+               0u8);
+    
+    let mut dev = gear::DALIsimGear::new();
+    dev.random_address = 0x123446;
+    dev.short_address = 4;
+    dev.status = 0x38;
+    sim.add_device(Box::new(dev));
+    
+    assert_eq!(block_on(sim.send_command(&[4<<1, cmd::QUERY_STATUS], 
+                                         driver::EXPECT_ANSWER)).unwrap(),
+               0x38u8);
+
+    match block_on(sim.send_command(&[4<<1, cmd::QUERY_CONTROL_GEAR_PRESENT],
+                                    driver::EXPECT_ANSWER)) {
+        Ok(0xff) => {},
+        r => panic!("Invalid answer: {:?}", r)
+    }
+    
+    match block_on(sim.send_command(&[5<<1, cmd::QUERY_CONTROL_GEAR_PRESENT],
+                                    driver::EXPECT_ANSWER)) {
+        Ok(0xff) => panic!("Gear not present"),
+        Err(DALIcommandError::Timeout) => {},
+        r => panic!("Invalid answer: {:?}", r)
+    }
 }

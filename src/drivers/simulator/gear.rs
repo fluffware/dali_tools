@@ -2,6 +2,7 @@ use super::device::DALIsimDevice;
 use crate::drivers::driver::DALIcommandError;
 use crate::defs::common::MASK;
 use crate::defs::gear::cmd;
+use crate::defs::gear::status;
 use crate::drivers::driver;
 
 extern crate rand;
@@ -85,10 +86,55 @@ impl DALIsimGear
         }
     }
 }
+fn query_status_flag(dev: &DALIsimGear, flag: u8)
+                     ->Result<u8, DALIcommandError>
+{
+    if (dev.status & flag) != 0 {
+        driver::YES
+    } else {
+        driver::NO
+    } 
+}
 
-fn device_cmd(_dev: &mut DALIsimGear, _addr: u8, _cmd: u8, _flags: u16) 
+// Status flags that are not dependant on any other state
+pub const STORED_STATUS_FLAGS : u8 = 
+    status::GEAR_FAILURE 
+    | status::LAMP_FAILURE
+    | status::LIMIT_ERROR
+    | status::FADE_RUNNING
+    | status::RESET_STATE
+    | status::POWER_CYCLE;
+
+fn update_status(dev: &mut DALIsimGear) 
+{
+    dev.status = (dev.status & STORED_STATUS_FLAGS) 
+        | if dev.actual_level > 0 {status::LAMP_ON} else {0}
+        | if dev.short_address == MASK {status::NO_ADDRESS} else {0};
+}
+
+fn device_cmd(dev: &mut DALIsimGear, _addr: u8, cmd: u8, _flags: u16) 
               ->Result<u8, DALIcommandError>
 {
+    match cmd {
+        cmd::QUERY_STATUS => {
+            update_status(dev);
+            return Ok(dev.status)
+        },
+        cmd::QUERY_CONTROL_GEAR_PRESENT => 
+            return driver::YES,
+        cmd::QUERY_CONTROL_GEAR_FAILURE =>
+            return query_status_flag(&dev, status::GEAR_FAILURE),
+        cmd::QUERY_LAMP_FAILURE =>
+            return query_status_flag(&dev, status::LAMP_FAILURE),
+        cmd::QUERY_LAMP_POWER_ON =>
+            return query_status_flag(&dev, status::LAMP_ON),
+        cmd::QUERY_LIMIT_ERROR =>
+            return query_status_flag(&dev, status::LIMIT_ERROR),
+        cmd::QUERY_MISSING_SHORT_ADDRESS => {
+            return if dev.short_address == MASK {driver::YES} else {driver::NO}
+        },
+        _ => {}
+    }
     Err(DALIcommandError::Timeout)
 }
 
@@ -228,3 +274,4 @@ impl DALIsimDevice for DALIsimGear
         driver::NO
     }
 }
+

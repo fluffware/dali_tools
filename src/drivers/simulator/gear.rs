@@ -1,8 +1,7 @@
 use super::device::DALIsimDevice;
 use crate::drivers::driver::DALIcommandError;
 use crate::defs::common::MASK;
-use crate::defs::gear::cmd;
-use crate::defs::gear::status;
+use crate::defs::gear:: {cmd,status,device_type, light_source};
 use crate::drivers::driver;
 use std::time::Instant;
 use std::time::Duration;
@@ -219,6 +218,11 @@ fn update_status(dev: &mut DALIsimGear)
         | if dev.short_address == MASK {status::NO_ADDRESS} else {0};
 }
 
+fn yes_no(p: bool) -> Result<u8, DALIcommandError>
+{
+    if p {driver::YES} else {driver::NO}
+}
+
 fn device_cmd(dev: &mut DALIsimGear, _addr: u8, cmd: u8, _flags: u16) 
               ->Result<u8, DALIcommandError>
 {
@@ -234,12 +238,59 @@ fn device_cmd(dev: &mut DALIsimGear, _addr: u8, cmd: u8, _flags: u16)
         cmd::QUERY_LAMP_FAILURE =>
             return query_status_flag(&dev, status::LAMP_FAILURE),
         cmd::QUERY_LAMP_POWER_ON =>
-            return query_status_flag(&dev, status::LAMP_ON),
+            return yes_no(dev.actual_level > 0),
         cmd::QUERY_LIMIT_ERROR =>
             return query_status_flag(&dev, status::LIMIT_ERROR),
+        cmd::QUERY_RESET_STATE =>
+            return query_status_flag(&dev, status::RESET_STATE),
         cmd::QUERY_MISSING_SHORT_ADDRESS => {
-            return if dev.short_address == MASK {driver::YES} else {driver::NO}
+            return yes_no(dev.short_address == MASK)
         },
+        cmd::QUERY_VERSION_NUMBER => {
+            return Ok(0xff)
+        },
+        cmd::QUERY_DEVICE_TYPE =>
+            return Ok(device_type::LED),
+        cmd::QUERY_NEXT_DEVICE_TYPE =>
+            return driver::NO,
+        cmd::QUERY_PHYSICAL_MINIMUM =>
+            return Ok(dev.phm),
+        cmd::QUERY_POWER_FAILURE =>
+            return query_status_flag(&dev, status::POWER_CYCLE),
+        cmd::QUERY_CONTENT_DTR0 =>
+            return Ok(dev.dtr0),
+        cmd::QUERY_CONTENT_DTR1 =>
+            return Ok(dev.dtr1),
+        cmd::QUERY_CONTENT_DTR2 =>
+            return Ok(dev.dtr2),
+        cmd::QUERY_OPERATING_MODE =>
+            return Ok(0x00),
+        cmd::QUERY_LIGHT_SOURCE_TYPE =>
+            return Ok(light_source::LED),
+        cmd::QUERY_ACTUAL_LEVEL =>
+            return Ok(dev.actual_level),
+        cmd::QUERY_MAX_LEVEL =>
+            return Ok(dev.max_level),
+        cmd::QUERY_MIN_LEVEL =>
+            return Ok(dev.min_level),
+        cmd::QUERY_POWER_ON_LEVEL =>
+            return Ok(dev.power_on_level),
+        cmd::QUERY_SYSTEM_FAILURE_LEVEL =>
+            return Ok(dev.system_failure_level),
+        cmd::QUERY_FADE =>
+            return Ok(dev.fade),
+        cmd::QUERY_SCENE_LEVEL_0..= cmd::QUERY_SCENE_LEVEL_15 =>
+            return Ok(dev.scene[(cmd - cmd::QUERY_SCENE_LEVEL_0) as usize]),
+        cmd::QUERY_GROUPS_0_7 =>
+            return Ok((dev.gear_groups & 0xff) as u8),
+        cmd::QUERY_GROUPS_8_15 =>
+            return Ok((dev.gear_groups >> 8) as u8),
+        cmd::QUERY_RANDOM_ADDRESS_H =>
+            return Ok((dev.random_address >> 16) as u8),
+        cmd::QUERY_RANDOM_ADDRESS_M =>
+            return Ok(((dev.random_address >> 8) & 0xff) as u8),
+        cmd::QUERY_RANDOM_ADDRESS_L =>
+            return Ok((dev.random_address & 0xff) as u8),        
         _ => {}
     }
     Err(DALIcommandError::Timeout)

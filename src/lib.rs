@@ -31,5 +31,6 @@ pub mod defs {
         pub mod cmd;
         pub mod status;
         pub mod device_type;
+        pub mod light_source;
     }
 }

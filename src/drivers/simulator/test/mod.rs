@@ -119,6 +119,7 @@ fn test_queries()
     dev.random_address = 0x123456;
     dev.short_address = 3;
     dev.status = 0;
+    dev.actual_level = 0;
     sim.add_device(Box::new(dev));
 
     assert_eq!(block_on(sim.send_command(&[3<<1, cmd::QUERY_STATUS], 
@@ -133,7 +134,7 @@ fn test_queries()
     
     assert_eq!(block_on(sim.send_command(&[4<<1, cmd::QUERY_STATUS], 
                                          driver::EXPECT_ANSWER)).unwrap(),
-               0x38u8);
+               0x3cu8);
 
     match block_on(sim.send_command(&[4<<1, cmd::QUERY_CONTROL_GEAR_PRESENT],
                                     driver::EXPECT_ANSWER)) {

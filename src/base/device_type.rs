@@ -27,7 +27,7 @@ impl fmt::Display for DeviceType
             types::DISCHARGE => "Discharge (HID)",
             types::LV_HALOGEN => "Low-voltage halogen",
             types::INCANDESCENT => "Incandescent",
-            types::DC_COLNTROL => "Conversion to D.C. voltage",
+            types::DC_CONTROL => "Conversion to D.C. voltage",
             types::LED => "LED",
             types::SWITCHING => "Switching",
             types::COLOUR => "Colour",

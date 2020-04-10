@@ -8,6 +8,7 @@ pub mod utils {
     pub mod discover;
     pub mod long_address;
     pub mod device_info;
+    pub mod memory_banks;
 }
 
 pub mod drivers {

@@ -51,15 +51,41 @@ impl fmt::Display for DALIcommandError
 
 pub trait DALIdriver: Send
 {
+    /// Send raw DALI commands
+    ///
+    /// # Arguments
+    /// * `cmd` - Bytes of command
+    /// * `flags` - Options for transaction
+    
     fn send_command(&mut self, cmd: &[u8;2], flags:u16) -> 
         Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>;
 
+    /// Send addressed DALI commands
+    ///
+    /// # Arguments
+    /// * `addr` - Destination address of command 
+    /// * `cmd` - Second byte of command
+    /// * `flags` - Options for transaction
     fn send_device_cmd(&mut self, addr: &dyn BusAddress, cmd: u8, flags:u16) -> 
         Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>
     {
         self.send_command(&[addr.bus_address() | 1, cmd], flags)
     }
-
+    
+    /// Send DALI DAPC commands
+    ///
+    /// # Arguments
+    /// * `addr` - Address of device(s) 
+    /// * `level` - Intensity level
+    /// * `flags` - Options for transaction
+    
+    fn send_device_level(&mut self, addr: &dyn BusAddress, level: u8,
+                         flags:u16) ->
+        Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>
+    {
+          self.send_command(&[addr.bus_address(), level], flags)
+    }
+                         
 }
 
 pub const YES: Result<u8, DALIcommandError> = Ok(0xff);

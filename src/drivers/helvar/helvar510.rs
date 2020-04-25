@@ -4,9 +4,9 @@ use std::sync::Mutex;
 use std::pin::Pin;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
+use std::sync::mpsc::RecvError;
 use std::thread::JoinHandle;
 use std::thread;
-use std::time::Duration;
 use futures::future::Future;
 
 use hidapi::HidDevice;
@@ -93,8 +93,12 @@ fn driver_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>) -> DriverError {
         }
     }
     loop {
-        match rx.try_recv() {
+        match rx.recv() {
             Ok(ref req) => {
+                /*
+                println!("Got cmd: {:02x} {:02x}", 
+                         req.cmd.data[0], req.cmd.data[1]);
+                 */
                 let mut cmd = 0x50;
                 if (req.cmd.flags & driver::SEND_TWICE) != 0 {
                     cmd |= 0x80;
@@ -148,11 +152,8 @@ fn driver_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>) -> DriverError {
                         }
                     }
                 }
-            }
-            Err(TryRecvError::Empty) => {
-                thread::sleep(Duration::from_millis(100));
             },
-            Err(TryRecvError::Disconnected) => break
+            Err(RecvError) => break
         };
         
     };

@@ -22,3 +22,7 @@ path = "src/swap_addr.rs"
 [[bin]]
 name = "query_device"
 path = "src/query_device.rs"
+
+[[bin]]
+name = "identify"
+path = "src/identify.rs"

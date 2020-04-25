@@ -1,0 +1,26 @@
+body {
+    background: #80f080;
+}
+
+#live_frame
+{
+    position: relative;
+}
+
+#live_frame svg
+{
+    position: absolute;
+    top: 0px;
+    left: 0px;
+}
+
+#live_frame video
+{
+    border: solid;
+}
+    
+svg circle {
+    fill: none;
+    stroke: black;
+    stroke-width: 3px;
+}

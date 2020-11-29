@@ -2,13 +2,12 @@ use dali_tools as dali;
 use dali::drivers::driver::{self,DALIdriver,DALIcommandError};
 use dali::drivers::helvar::helvar510::Helvar510driver;
 use dali::defs::gear::cmd;
-use futures::executor::block_on;
 use dali::base::address::Short;
 use dali::base::address::Long;
 use dali::base::address::BusAddress;
 use std::boxed::Box;
 use std::pin::Pin;
-use futures::future::Future;
+use core::future::Future;
 
 
 #[macro_use]
@@ -94,7 +93,8 @@ async fn swap_addr(driver: &mut dyn DALIdriver, addr1:Short, addr2:Short)
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let matches = clap_app!(swap_addr =>
                          (about: "Swaps short addresses of two devices. If only one is present then the address of that one is changed.")
                          (@arg ADDR1: +required "First address")
@@ -126,7 +126,7 @@ fn main() {
     };
 
     let mut driver = Helvar510driver::new();
-    match block_on(swap_addr(&mut driver, addr1, addr2)) {
+    match swap_addr(&mut driver, addr1, addr2).await {
         Ok(_) => {},
         Err(e) => {
             println!("Failed while scanning for devices: {:?}",e);

@@ -3,7 +3,6 @@ use dali::drivers::helvar::helvar510::Helvar510driver;
 use dali::base::address::{Short,Group,Address::Broadcast};
 use dali::drivers::driver::{self, DALIdriver, DALIcommandError};
 use dali::defs::gear::cmd;
-use futures::executor::block_on;
 use std::error::Error;
 
 
@@ -80,7 +79,8 @@ async fn identify_setup(driver: &mut dyn DALIdriver) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
       let matches = 
         clap_app!(identify =>
                   (about: "Identify DALI gear")
@@ -95,7 +95,7 @@ fn main() {
 
      let space = match u8::from_str_radix(matches.value_of("SPACE")
                                           .unwrap_or("150"),10){
-        Ok(x) if x >= 0 && x <= 254 => x,
+        Ok(x) if x <= 254 => x,
         Ok(_) => {
             println!("Space level out of range");
             return
@@ -108,7 +108,7 @@ fn main() {
     
     let mark = match u8::from_str_radix(matches.value_of("MARK")
                                         .unwrap_or("200"),10){
-        Ok(x) if x >= 0 && x <= 254 => x,
+        Ok(x) if x <= 254 => x,
         Ok(_) => {
             println!("Mark level out of range");
             return
@@ -122,7 +122,7 @@ fn main() {
     let driver = &mut Helvar510driver::new();
 
     if setup {
-        match block_on(identify_setup(driver)) {
+        match identify_setup(driver).await {
             Ok(_) => {},
             Err(e) => {
                 println!("{}", e);
@@ -131,7 +131,7 @@ fn main() {
     }
 
     loop {
-        match block_on(identify(driver,space,mark)) {
+        match identify(driver,space,mark).await {
             Ok(_) => {},
             Err(e) => {
                 println!("{}", e);

@@ -172,19 +172,24 @@ const FADE_MULTIPLIER : [Duration;5] = [
 fn start_fade_time(dev: &mut DALIsimGear)
 {
     if (dev.fade & 0xf0) == 0x00 && (dev.extended_fade_time & 0x70) == 0x00 {
+        // No fade, change instantly
         dev.actual_level = dev.target_level;
         return;
     } else {
         if (dev.fade & 0xf0) == 0x0 {
+            // Use extended fade times
             if dev.extended_fade_time == 0 || dev.extended_fade_time > 0x4f {
+                // Extended fade is zero
                 dev.actual_level = dev.target_level;
                 return;
             } else {
+                // Extended fade time
                 dev.fade_duration = 
                     FADE_MULTIPLIER[dev.extended_fade_time as usize>>4] 
                     * ((dev.extended_fade_time & 0x0f) +1) as u32;
             }
         } else {
+            // Basic fadetime
             dev.fade_duration = FADE_TIMES[dev.fade as usize >> 4];
         }
     }
@@ -192,6 +197,7 @@ fn start_fade_time(dev: &mut DALIsimGear)
     dev.fade_start_level = (dev.actual_level as i16) << 7;
     dev.fade_end_level = (dev.target_level as i16) << 7;
 }
+
 fn query_status_flag(dev: &DALIsimGear, flag: u8)
                      ->Result<u8, DALIcommandError>
 {
@@ -419,6 +425,11 @@ impl DALIsimDevice for DALIsimGear
             },
             addr @ 0x40..=0x4f => {
                 if self.gear_groups & (1<<(addr & 0x0f)) != 0 {
+                    return device_cmd(self, cmd[0], cmd[1], flags);
+                }
+            },
+            0x7e => {
+                if self.short_address == MASK {
                     return device_cmd(self, cmd[0], cmd[1], flags);
                 }
             },

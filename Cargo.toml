@@ -5,11 +5,11 @@ authors = ["ksb <ksb@fluffware.se>"]
 edition = "2018"
 
 [dependencies]
-futures = "0.3.1"
-hidapi = "1.*"
-hyper = "0.12.*"
+futures	= "0.3.*"
+tokio= {version = "0.2.*", features = ["macros", "rt-core", "time", "stream", "io-util", "sync", "blocking"]}
 clap = "2.33.*"
 rand = "*"
+libusb-async = { path = "/home/ksb/projects/libusb-rs-async" }
 
 [[bin]]
 name = "dali_tools"
@@ -26,3 +26,11 @@ path = "src/query_device.rs"
 [[bin]]
 name = "identify"
 path = "src/identify.rs"
+
+[[bin]]
+name = "helvar_dump"
+path = "src/helvar_dump.rs"
+
+[[bin]]
+name = "dali_monitor"
+path = "src/dali_monitor.rs"

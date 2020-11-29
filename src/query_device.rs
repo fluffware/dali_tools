@@ -1,14 +1,13 @@
 use dali_tools as dali;
 use dali::drivers::helvar::helvar510::Helvar510driver;
 use dali::base::address::{Short};
-use futures::executor::block_on;
 use dali::utils::device_info;
 use dali::utils::memory_banks ;
 #[macro_use]
 extern crate clap;
 
-
-fn main() {
+#[tokio::main]
+async fn main() {
       let matches = 
         clap_app!(swap_addr =>
                   (about: "Query one or more DALI gears for various information.")
@@ -32,19 +31,19 @@ fn main() {
     let driver = &mut Helvar510driver::new();
 
     let info =
-        match block_on(device_info::read_device_info(driver, addr)) {
+        match device_info::read_device_info(driver, addr).await {
             Ok(i) => i,
             Err(e) => {
-                println!("{}", e);
+                println!("Failed to read device info: {}", e);
                 return;
             }
         };
     println!("{}", info);
     if read_memory {
-        match block_on(memory_banks::read_bank_0(driver, addr, 0, 0, 0x18)) {
+        match memory_banks::read_bank_0(driver, addr, 0, 0, 0x18).await {
             Ok(data) => println!("{}", data),
             Err(e) => {
-                println!("{}", e);
+                println!("Failed to read memory banks: {}", e);
                 return;
             }
         }

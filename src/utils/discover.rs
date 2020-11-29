@@ -3,31 +3,23 @@ use crate::drivers::driver::{self,DALIdriver,DALIcommandError};
 use crate::utils::long_address;
 use crate::base::address::Short;
 use crate::base::address::Long;
-use futures::stream::Stream;
+use tokio::stream::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::Mutex;
-use futures::executor::block_on;
-use std::thread;
-use std::time::Duration;
-use futures::channel::mpsc::{Sender,TrySendError};
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::{Sender,error::SendError};
 use std::error::Error;
 
-fn send_blocking<T>(tx:&mut Sender<T>, item : T)
-                    -> Result<(), TrySendError<T>>
+async fn send_blocking<T>(tx:&mut Sender<T>, item : T)
+                    -> Result<(), SendError<T>>
 {
-    let mut sent = item;
+    let sent = item;
     loop {
-        let res = tx.try_send(sent);
+        let res = tx.send(sent).await;
         match res {
             Ok(()) => break,
             Err(r) => {
-                if r.is_full() {
-                    thread::sleep(Duration::from_millis(1000));
-                    sent = r.into_inner();
-                } else {
                 return Err(r);
-                }
             }
         }
     }
@@ -207,7 +199,7 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                             long_conflict: false, 
                             short_conflict: false
                         });
-                        match send_blocking(tx, msg)
+                        match send_blocking(tx, msg).await
                         {
                             Ok(()) => {},
                             Err(e) => 
@@ -275,7 +267,7 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                     long_conflict: true, 
                     short_conflict: false
                 });
-                match send_blocking(tx, msg)
+                match send_blocking(tx, msg).await
                 {
                     Ok(()) => {},
                     Err(e) => 
@@ -345,10 +337,12 @@ async fn discover_async(d: &mut dyn DALIdriver,
             }
         } {
             Ok(l) => {
-                match send_blocking(tx, Ok(Discovered{long:Some(l),
-                                                      short:Some(a),
-                                                      long_conflict: false, 
-                                                      short_conflict: false})) {
+                match send_blocking(tx, 
+                                    Ok(Discovered{long:Some(l),
+                                                  short:Some(a),
+                                                  long_conflict: false, 
+                                                  short_conflict: false}))
+                    .await {
                     Ok(()) => {},
                     Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
                 };
@@ -357,7 +351,8 @@ async fn discover_async(d: &mut dyn DALIdriver,
                 match send_blocking(tx, Ok(Discovered{long:None,
                                                       short:Some(a),
                                                       long_conflict: false, 
-                                                      short_conflict: true})) {
+                                                      short_conflict: true}))
+                .await {
                     Ok(()) => {},
                     Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
                 };
@@ -402,17 +397,18 @@ async fn discover_async(d: &mut dyn DALIdriver,
 }
 
 pub type DiscoverItem = Result<Discovered, Arc<dyn Error + Send + Sync>>;
-fn discover_thread(mut tx: futures::channel::mpsc::Sender<DiscoverItem>,
-                   driver: Arc<Mutex<dyn DALIdriver>>)
+
+async fn discover_thread(mut tx: tokio::sync::mpsc::Sender<DiscoverItem>,
+                   driver: Arc<Mutex<Box<dyn DALIdriver>>>)
 {
-    let mut d = driver.lock().unwrap();
-    match block_on(discover_async(&mut *d, &mut tx)) {
+    let mut d = driver.lock().await;
+    match discover_async(d.as_mut(), &mut tx).await {
         Ok(()) => {},
         Err(e) => {
-            send_blocking(&mut tx, Err(e)).unwrap();
+            send_blocking(&mut tx, Err(e)).await.unwrap();
         }
     };
-    match block_on(d.send_command(&[cmd::TERMINATE, 0x00], driver::PRIORITY_1))
+    match d.send_command(&[cmd::TERMINATE, 0x00], driver::PRIORITY_1).await
     {
         // Ignore any errors
         _ => {}
@@ -423,16 +419,16 @@ fn discover_thread(mut tx: futures::channel::mpsc::Sender<DiscoverItem>,
 /// Find all devices on the bus.
 ///
 /// Returns a stream of all devices found.
-/// Devices a found by first testing all 64 short addresses and then,
+/// Devices are found by first testing all 64 short addresses and then,
 /// after WITHDRAWing the addresses found,
 /// search for unaddressed devices using COMPARE.
 
-pub fn find_quick<'a>(driver: Arc<Mutex<dyn DALIdriver>>)
+pub fn find_quick<'a>(driver: Arc<Mutex<Box<dyn DALIdriver>>>)
                   -> Pin<Box<dyn Stream<Item = DiscoverItem>>>
 {
-    let (tx,rx) = futures::channel::mpsc::channel(64);
-    std::thread::spawn(|| {
-        discover_thread(tx,driver)
+    let (tx,rx) = tokio::sync::mpsc::channel(64);
+    tokio::spawn(async move {
+        discover_thread(tx,driver).await
     });
     return Box::pin(rx)
 }

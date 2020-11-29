@@ -1,25 +1,29 @@
-use super::super::driver::{self, DALIdriver, DALIcommandError};
-use super::super::utils::{DALIreq, DALIcmd, DALIreply,DALIResultFuture};
-use futures::future::{Future};
+use super::super::driver::{self,DALIdriver, DALIcommandError};
+use super::super::utils::{DALIreq, DALIcmd};
+use core::future::{Future};
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::Arc;
-use std::sync::mpsc;
-use std::thread;
-use std::thread::JoinHandle;
+use tokio::sync::oneshot;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use std::error::Error;
 use std::fmt;
 use super::device::DALIsimDevice;
 
 #[derive(Debug,Clone)]
-enum SimDriverError
+pub enum SimDriverError
 {
-    OK
+    OK,
+    QueuingFailed,
+    ReplyingFailed,
+    ThreadError
 }
 
 impl Error for SimDriverError
 {
 }
+
 
 impl fmt::Display for SimDriverError
 {
@@ -36,8 +40,8 @@ struct DALIsimCtxt
 pub struct DALIsim
 {
     ctxt: Arc<Mutex<DALIsimCtxt>>,
-    join: Option<JoinHandle<SimDriverError>>,
-    sender: Option<mpsc::SyncSender<Arc<DALIreq>>>
+    join: Option<JoinHandle<Result<(),SimDriverError>>>,
+    sender: Option<mpsc::Sender<DALIreq>>
 }
 
 
@@ -45,15 +49,14 @@ impl DALIsim
 {
     pub fn new() -> DALIsim
     { 
-        let (tx, rx) = mpsc::sync_channel::<Arc<DALIreq>>(10);
+        let (tx, rx) = mpsc::channel::<DALIreq>(10);
         let ctxt = Arc::new(Mutex::new(DALIsimCtxt{
             devices: Vec::new()
         }));
         let thread_ctxt = ctxt.clone();
-        let join = thread::spawn(|| {
-            sim_thread(rx, thread_ctxt)
+        let join = tokio::spawn(sim_thread(rx, thread_ctxt));
 
-        });
+        
 
         DALIsim{ctxt: ctxt,
                 sender: Some(tx),join: Some(join)}
@@ -65,28 +68,25 @@ impl DALIsim
 
         ctxt.devices.push(dev);
     }
-}
 
-impl Drop for DALIsim
-{
-    fn drop(&mut self)
-    {
+    pub async fn stop(&mut self) -> Result<(), SimDriverError> {
         self.sender = None;
         match self.join.take() {
             Some(join) => {
-                join.join().expect("Failed to join driver thread");
+                join.await.map_err(|_e| SimDriverError::ThreadError)??;
             },
             None => {}
         }
+        Ok(())
     }
 }
 
-fn sim_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>, 
-              ctxt: Arc<Mutex<DALIsimCtxt>>) -> SimDriverError
+async fn sim_engine(rx: &mut mpsc::Receiver<DALIreq>, 
+              ctxt: Arc<Mutex<DALIsimCtxt>>) -> Result<(),SimDriverError>
 {
     loop {
-        match rx.recv() {
-            Ok(ref req) => {
+        match rx.recv().await {
+            Some(req) => {
                 {
                     let mut ctxt = ctxt.lock().unwrap();
                     // Return Timeout if no device returns a reply
@@ -110,53 +110,44 @@ fn sim_engine(rx: &mut mpsc::Receiver<Arc<DALIreq>>,
                         }
                                 
                     }
-                    let mut reply = req.reply.lock().unwrap();
                     match status {
                         Ok(r) => {
-                            reply.data[0] = r;
-                            reply.err = DALIcommandError::OK;
+                            req.reply.send(Ok(r))
+                                .map_err(|_e| SimDriverError::ReplyingFailed)?;
                         },
                         Err(DALIcommandError::Timeout) 
                             if req.cmd.flags & driver::EXPECT_ANSWER == 0 => {
-                                reply.data[0] = 0;
-                                reply.err = DALIcommandError::OK;
+                                req.reply.send(Ok(0))
+                                    .map_err(|_e| SimDriverError::ReplyingFailed)?;
                         },
-                        Err(e) => {reply.err = e;}
+                        Err(e) => {req.reply.send(Err(e))
+                                   .map_err(|_e| SimDriverError::ReplyingFailed)?}
                     }
                 }
-                let mut waker = req.waker.lock().unwrap();
-                match waker.take() {
-                    Some(w) =>  {
-                        w.wake();
-                    },
-                    _ => {}
-                }
             },
-            Err(_) => {
+            None => {
                 break
             }
         };
         
     };
-    return SimDriverError::OK;
+    return Ok(());
 }
 
-fn sim_thread(mut rx: mpsc::Receiver<Arc<DALIreq>>,
-              ctxt: Arc<Mutex<DALIsimCtxt>>) -> SimDriverError
+async fn sim_thread(mut rx: mpsc::Receiver<DALIreq>,
+              ctxt: Arc<Mutex<DALIsimCtxt>>) -> Result<(),SimDriverError>
 {
-    let res = sim_engine(&mut rx, ctxt);
-    loop {
-        match rx.try_recv() {
-            Ok(ref req) => {
-                let mut reply = req.reply.lock().unwrap();
-                reply.err = DALIcommandError::DriverError(Arc::new(res.clone()));
-                let mut waker = req.waker.lock().unwrap();
-                match waker.take() {
-                    Some(w) => {w.wake();},
-                    _ => {}
-                }
+    let res = sim_engine(&mut rx, ctxt).await;
+    if let Err(err) = &res {
+        loop {
+            match rx.try_recv() {
+            Ok(req) => {
+                req.reply.send(Err(DALIcommandError::DriverError(
+                    Arc::new(err.clone()))))
+                    .map_err(|_e| SimDriverError::ReplyingFailed)?;
             },
-            _ => break
+                _ => break
+            }
         }
     }
     res    
@@ -168,21 +159,30 @@ impl DALIdriver for DALIsim
     fn send_command(&mut self, cmd: &[u8;2], flags:u16) -> 
         Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>
     {
+        let (tx, rx) = oneshot::channel();
         let req = DALIreq{cmd: DALIcmd 
                           {
                               data: [cmd[0], cmd[1], 0],
                               flags: flags
                           },
-                          reply: Arc::new(Mutex::new(DALIreply {
-                              data: [0,0,0],
-                              err: DALIcommandError::Pending
-                          })),
-                          waker: Arc::new(Mutex::new(None))
+                          reply: tx
         };
-        let req_ref = Arc::new(req);
-        
-        self.sender.as_ref().unwrap().send(req_ref.clone()).expect("Failed to send DALI request");
-        Box::pin(DALIResultFuture::new(req_ref))
+        match self.sender.as_mut().unwrap().try_send(req) {
+            Ok(()) => {
+                Box::pin(async {
+                    match rx.await {
+                            Ok(r) => r,
+                        Err(e) => Err(DALIcommandError::DriverError(Arc::new(e)))
+                    }
+                    })
+            },
+            Err(_) => {
+                Box::pin(async {
+                    Err(DALIcommandError::DriverError(
+                        Arc::new(SimDriverError::QueuingFailed)))
+                })
+            }
+        }
         
     }
 }

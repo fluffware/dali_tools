@@ -1,11 +1,7 @@
-use crate::base::status::GearStatus;
-use crate::base::address::{Short,Long,BusAddress};
-use crate::base::device_type::DeviceType;
+use crate::base::address::{Short};
 use crate::defs::gear::cmd;
-use crate::defs::common::MASK;
 use crate::drivers::driver::{self, DALIdriver, DALIcommandError};
 use std::fmt;
-use futures::future;
 use std::error::Error;
 use std::convert::TryInto;
 
@@ -131,7 +127,7 @@ pub async fn read_range(d: &mut dyn DALIdriver, addr: Short,
 }
 
 pub async fn read_bank_0(d: &mut dyn DALIdriver, addr: Short, 
-                         bank: u8, start: u8, length: u8) 
+                         _bank: u8, _start: u8, _length: u8) 
                          -> Result<MemoryBank0Info, Box<dyn Error>>
 {
     let mut bank0 = [0u8;0x1b];

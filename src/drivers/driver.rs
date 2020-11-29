@@ -1,5 +1,5 @@
 use std::pin::Pin;
-use futures::future::Future;
+use core::future::Future;
 use std::error::Error;
 use std::sync::Arc;
 use std::fmt;
@@ -85,7 +85,6 @@ pub trait DALIdriver: Send
     {
           self.send_command(&[addr.bus_address(), level], flags)
     }
-                         
 }
 
 pub const YES: Result<u8, DALIcommandError> = Ok(0xff);

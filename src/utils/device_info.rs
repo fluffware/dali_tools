@@ -5,7 +5,7 @@ use crate::defs::gear::cmd;
 use crate::defs::common::MASK;
 use crate::drivers::driver::{self, DALIdriver, DALIcommandError};
 use std::fmt;
-use futures::future;
+use tokio::join;
 
 pub struct DeviceInfo
 {
@@ -251,10 +251,10 @@ pub async fn read_device_info(d: &mut dyn DALIdriver, addr: Short)
     };
 
     info.groups =
-        match future::join(d.send_device_cmd(&addr, cmd::QUERY_GROUPS_0_7, 
-                                             driver::EXPECT_ANSWER),
-                           d.send_device_cmd(&addr, cmd::QUERY_GROUPS_8_15, 
-                                             driver::EXPECT_ANSWER)).await {
+        match join!(d.send_device_cmd(&addr, cmd::QUERY_GROUPS_0_7, 
+                                      driver::EXPECT_ANSWER),
+                    d.send_device_cmd(&addr, cmd::QUERY_GROUPS_8_15, 
+                                      driver::EXPECT_ANSWER)) {
             (Ok(l), Ok(h)) => Some(((h as u16) << 8) | (l as u16)),
             (Err(DALIcommandError::Timeout), _) => None,
             (_, Err(DALIcommandError::Timeout)) => None,

@@ -9,7 +9,7 @@ futures	= "0.3.*"
 tokio= {version = "0.2.*", features = ["macros", "rt-core", "time", "stream", "io-util", "sync", "blocking"]}
 clap = "2.33.*"
 rand = "*"
-libusb-async = { path = "/home/ksb/projects/libusb-rs-async" }
+libusb-async = { git = "https://github.com/fluffware/libusb-rs-async.git" }
 
 [[bin]]
 name = "dali_tools"

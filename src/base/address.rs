@@ -49,7 +49,7 @@ impl Address
                 Ok(Address::Short(Short::new(a+1))),
             a @ 0x40..=0x4f =>
                 Ok(Address::Group(Group::new((a & 0x0f) + 1))),
-            0xff => Ok(Address::Broadcast),
+            0x7f => Ok(Address::Broadcast),
             _ => Err(AddressError::InvalidAddress)
         }
     }

@@ -1,15 +1,15 @@
-use super::driver::{DALIcommandError};
+use super::driver::{DaliSendResult};
 use tokio::sync::oneshot;
 
 
 pub struct DALIcmd
 {
-    pub data: [u8;3],
+    pub data: [u8;4],
     pub flags: u16,
 }
 
 pub struct DALIreq
 {
     pub cmd: DALIcmd,
-    pub reply: oneshot::Sender<Result<u8, DALIcommandError>>
+    pub reply: oneshot::Sender<DaliSendResult>
 }

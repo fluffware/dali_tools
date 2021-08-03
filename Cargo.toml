@@ -4,12 +4,18 @@ version = "0.1.0"
 authors = ["ksb <ksb@fluffware.se>"]
 edition = "2018"
 
+[features]
+helvar510_driver= ["libusb-async"]
+simulator=[]
+pru_driver= []
+
 [dependencies]
 futures	= "0.3.*"
 tokio= {version = "0.2.*", features = ["macros", "rt-core", "time", "stream", "io-util", "sync", "blocking"]}
 clap = "2.33.*"
 rand = "*"
-libusb-async = { git = "https://github.com/fluffware/libusb-rs-async.git" }
+libusb-async = { git = "https://github.com/fluffware/libusb-rs-async.git", optional = true}
+lazy_static = "1"
 
 [[bin]]
 name = "dali_tools"
@@ -30,6 +36,7 @@ path = "src/identify.rs"
 [[bin]]
 name = "helvar_dump"
 path = "src/helvar_dump.rs"
+required-features = ["helvar510_driver"]
 
 [[bin]]
 name = "dali_monitor"

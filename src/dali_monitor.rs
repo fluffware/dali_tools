@@ -1,33 +1,28 @@
 use dali_tools as dali;
-use dali::drivers::helvar::helvar510::Helvar510driver;
-use dali::drivers::monitor::DALImonitor;
-use dali::drivers::monitor::DaliBusEventType;
+use dali::drivers::driver::{DaliBusEvent, DaliBusEventType};
 use dali::utils::decode;
-use tokio::stream::StreamExt;
-use tokio::time::Instant;
+use std::time::Instant;
 
 #[macro_use]
 extern crate clap;
 
 #[tokio::main]
 async fn main() {
+    if let Err(e) = dali::drivers::init() {
+	println!("Failed to initialize DALI drivers: {}", e);
+    }
     let _matches = 
         clap_app!(swap_addr =>
                   (about: "Print DALI bus traffic.")
         ).get_matches();
     
     let mut last_ts = Instant::now();
-    let driver = &mut Helvar510driver::new();
-    let mut monitor = driver.monitor_stream().unwrap();
+    let mut driver = dali::drivers::open("default").unwrap();
     loop {
-        let event = monitor.next().await;
-        let event = match event {
-            None => break,
-            Some(e) => e
-        };
-        print!("{:5}:", event.timestamp.duration_since(last_ts).as_millis());
-        last_ts = event.timestamp;
-        match event.event {
+        let DaliBusEvent{timestamp, event} = driver.next_bus_event().await;
+        print!("{:5}:", timestamp.duration_since(last_ts).as_millis());
+        last_ts = timestamp;
+        match event {
             DaliBusEventType::Recv24bitFrame(ref pkt) => {
                 for b in pkt {
                     print!(" {:02x}", b);

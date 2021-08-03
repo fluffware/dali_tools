@@ -1,44 +1,36 @@
 use dali_tools as dali;
-use dali::drivers::driver::{self,DALIdriver,DALIcommandError};
-use dali::drivers::helvar::helvar510::Helvar510driver;
+use dali::drivers::driver::{self,DaliDriver,DaliSendResult};
 use dali::defs::gear::cmd;
 use dali::base::address::Short;
 use dali::base::address::Long;
 use dali::base::address::BusAddress;
-use std::boxed::Box;
-use std::pin::Pin;
-use core::future::Future;
+use dali::drivers::command_utils::send_device_cmd;
 
 
 #[macro_use]
 extern crate clap;
 
-async fn set_search_addr(driver: &mut dyn DALIdriver, addr: Long)
-                         -> Result<u8, DALIcommandError>
+async fn set_search_addr(driver: &mut dyn DaliDriver, addr: Long)
+                         -> Result<u8, DaliSendResult>
 {
-    let res = driver.send_command(&[cmd::SEARCHADDRH,
-                                    (addr>>16 & 0xff) as u8],
-                                      driver::PRIORITY_1);
-    res.await?;
-    let res = driver.send_command(&[cmd::SEARCHADDRM,
-                                    (addr>>8 & 0xff) as u8], 
-                                  driver::PRIORITY_1);
-    res.await?;
-    let res = driver.send_command(&[cmd::SEARCHADDRL, (addr & 0xff) as u8],
-                                  driver::PRIORITY_1);
-    res.await?;
+    let res = driver.send_frame_16(&[cmd::SEARCHADDRH,
+                                     (addr>>16 & 0xff) as u8],
+                                   driver::PRIORITY_1);
+    res.await.check_send()?;
+    
+    let res = driver.send_frame_16(&[cmd::SEARCHADDRM,
+                                     (addr>>8 & 0xff) as u8], 
+                                   driver::PRIORITY_1);
+    res.await.check_send()?;
+    let res = driver.send_frame_16(&[cmd::SEARCHADDRL, (addr & 0xff) as u8],
+                                   driver::PRIORITY_1);
+    res.await.check_send()?;
     Ok(0)
 }
 
-fn send_device_cmd(driver: &mut dyn DALIdriver, addr: & dyn BusAddress,
-                   cmd: u8, flags: u16)
-    -> Pin<Box<dyn Future<Output = std::result::Result<u8, DALIcommandError>> + Send>>
-{
-    driver.send_command(&[addr.bus_address() | 1, cmd], flags)
-}
 
-async fn query_long_addr(driver: &mut dyn DALIdriver, short_addr: Short)
-    -> Result<Long, DALIcommandError>
+async fn query_long_addr(driver: &mut dyn DaliDriver, short_addr: Short)
+    -> Result<Long, DaliSendResult>
 {
     let hq = send_device_cmd(driver, &short_addr, cmd::QUERY_RANDOM_ADDRESS_H,
                              driver::EXPECT_ANSWER);
@@ -47,58 +39,62 @@ async fn query_long_addr(driver: &mut dyn DALIdriver, short_addr: Short)
     let lq = send_device_cmd(driver, &short_addr, 
                              cmd::QUERY_RANDOM_ADDRESS_L,
                              driver::EXPECT_ANSWER);
-    let h = hq.await?;
-    let m = mq.await?;
-    let l = lq.await?;
+    let h = hq.await.check_answer()?;
+    let m = mq.await.check_answer()?;
+    let l = lq.await.check_answer()?;
     Ok((h as u32)<<16 | (m as u32)<<8 | (l as u32))
 }
 
-async fn program_short_address(driver: &mut dyn DALIdriver, 
+async fn program_short_address(driver: &mut dyn DaliDriver, 
                                long: Long, short: Short)
-    -> Result<(), DALIcommandError>
+    -> Result<(), DaliSendResult>
 {
     set_search_addr(driver, long).await?;
-    driver.send_command(&[cmd::PROGRAM_SHORT_ADDRESS,
-                          short.bus_address() | 1], 0).await?;
-    let a = driver.send_command(&[cmd::QUERY_SHORT_ADDRESS,0x00], 
-                                driver::EXPECT_ANSWER).await?;
+    driver.send_frame_16(&[cmd::PROGRAM_SHORT_ADDRESS,
+                           short.bus_address() | 1], 0).await.check_send()?;
+    let a = driver.send_frame_16(&[cmd::QUERY_SHORT_ADDRESS,0x00], 
+                                driver::EXPECT_ANSWER).await.check_answer()?;
     println!("Set {}, got {}", short, a+1);
     Ok(())
 }
 
-async fn swap_addr(driver: &mut dyn DALIdriver, addr1:Short, addr2:Short)
-    -> Result<(), DALIcommandError>
+async fn swap_addr(driver: &mut dyn DaliDriver, addr1:Short, addr2:Short)
+    -> Result<(), DaliSendResult>
 {
     let long1 = match query_long_addr(driver, addr1).await {
         Ok(a) => Some(a),
-        Err(DALIcommandError::Timeout) => None,
+        Err(DaliSendResult::Timeout) => None,
         Err(e) => return Err(e)
     };
     println!("{}: 0x{:?}", addr1, long1);
     let long2 = match query_long_addr(driver, addr2).await {
         Ok(a) => Some(a),
-        Err(DALIcommandError::Timeout) => None,
+        Err(DaliSendResult::Timeout) => None,
         Err(e) => return Err(e)
     };
     println!("{}: 0x{:?}", addr2, long2);
-    driver.send_command(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
-                        driver::SEND_TWICE).await?;
+    driver.send_frame_16(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
+                        driver::SEND_TWICE).await.check_send()?;
     if let Some(l) = long1 {
         program_short_address(driver, l, addr2).await?;
     }
     if let Some(l) = long2 {
         program_short_address(driver, l, addr1).await?;
     }
-    driver.send_command(&[cmd::TERMINATE, 0], 0).await?;
+    driver.send_frame_16(&[cmd::TERMINATE, 0], 0).await.check_send()?;
     Ok(())
 }
 
 #[tokio::main]
 async fn main() {
+    if let Err(e) = dali::drivers::init() {
+	println!("Failed to initialize DALI drivers: {}", e);
+    }
     let matches = clap_app!(swap_addr =>
-                         (about: "Swaps short addresses of two devices. If only one is present then the address of that one is changed.")
-                         (@arg ADDR1: +required "First address")
-                         (@arg ADDR2: +required "Second address")
+                            (about: "Swaps short addresses of two devices. If only one is present then the address of that one is changed.")
+			    (@arg DEVICE: -d --device +takes_value "Select DALI-device")
+                            (@arg ADDR1: +required "First address")
+                            (@arg ADDR2: +required "Second address")
     ).get_matches();
     
     let addr1 = match u8::from_str_radix(matches.value_of("ADDR1").unwrap(),10){
@@ -124,9 +120,16 @@ async fn main() {
             return
         }
     };
-
-    let mut driver = Helvar510driver::new();
-    match swap_addr(&mut driver, addr1, addr2).await {
+    let device_name = 
+	matches.value_of("ADDR").unwrap_or("default");
+    let mut driver = match dali::drivers::open(device_name) {
+	Ok(d) => d,
+	Err(e) => {
+	    println!("Failed to open DALI device: {}", e);
+	    return
+	}
+    };
+    match swap_addr(&mut *driver, addr1, addr2).await {
         Ok(_) => {},
         Err(e) => {
             println!("Failed while scanning for devices: {:?}",e);

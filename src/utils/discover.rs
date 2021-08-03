@@ -1,5 +1,5 @@
 use crate::defs::gear::cmd;
-use crate::drivers::driver::{self,DALIdriver,DALIcommandError};
+use crate::drivers::driver::{self,DaliDriver,DaliSendResult};
 use crate::utils::long_address;
 use crate::base::address::Short;
 use crate::base::address::Long;
@@ -47,7 +47,7 @@ enum SearchResult
     Found(u32),
     Conflict(u32),
     ReplyError,
-    DriverError(Arc<DALIcommandError>)
+    DriverError(Box<DaliSendResult>)
 }
 
 const TOP_SEARCH_ADDR:u32 = 0x1000000; 
@@ -64,7 +64,7 @@ const TOP_SEARCH_ADDR:u32 = 0x1000000;
 /// `high_single` and `low_multiple` are candidates
 /// for `low` and `high` respectively when searching for the next device
 
-async fn find_device(driver: &mut dyn DALIdriver, mut low: u32, mut high: u32,
+async fn find_device(driver: &mut dyn DaliDriver, mut low: u32, mut high: u32,
                      high_single: &mut Option<u32>, 
                      low_multiple: &mut Option<u32>, 
                      current_search_addr: &mut u32) 
@@ -83,13 +83,15 @@ async fn find_device(driver: &mut dyn DALIdriver, mut low: u32, mut high: u32,
         match long_address::set_search_addr_changed(driver, pivot,
                                                     current_search_addr).await {
             Ok(_) => {},
-            Err(e) => return SearchResult::DriverError(Arc::new(e))
+            Err(e) => return SearchResult::DriverError(Box::new(e))
         }
         // COMPARE
-        let res = driver.send_command(&[cmd::COMPARE, 0x00], 
-                                      driver::PRIORITY_1|driver::EXPECT_ANSWER);
+        let res = driver.send_frame(&[cmd::COMPARE, 0x00, 0x00, 0x00], 
+                                    driver::PRIORITY_1
+				    | driver::LENGTH_16
+				    | driver::EXPECT_ANSWER);
         match res.await {
-            Ok(0xff) => {
+            DaliSendResult::Answer(0xff) => {
                 //println!("Found one");
                 if pivot >= high_single.unwrap_or(0) {
                     *high_single = Some(pivot + 1);
@@ -104,57 +106,53 @@ async fn find_device(driver: &mut dyn DALIdriver, mut low: u32, mut high: u32,
                 assert!(pivot > low);
                 pivot -= high_bit((pivot - low) / 2) + 1;
             },
-            Err(e) => {
-                match e {
-                    DALIcommandError::Timeout => {
-                        //println!("Found none");
-                        if let Some(lm) =   *low_multiple {
-                            if pivot + 2 > lm {
-                                break SearchResult::Conflict(pivot + 1);
-                            }
-                        }
-                        if pivot == high - 1 {
-                            break SearchResult::NoneFound;
-                        }
-                        low = pivot + 1;
-                        pivot += high_bit((high - pivot) / 2);
-                    },
-                    DALIcommandError::Framing => {
-                        //println!("Found multiple");
-                        *low_multiple = Some(pivot+1);
-                        if low >= pivot {
-                            //println!("Conflict");
-                            // There should only be one address <= pivot
-                            break SearchResult::Conflict(pivot);
-                        }
-                        high = pivot;
-                        pivot -= high_bit((pivot - low) / 2) + 1;
-                        
-                        
-                    },
-                    _ => return SearchResult::DriverError(Arc::new(e))
+            DaliSendResult::Timeout => {
+                //println!("Found none");
+                if let Some(lm) =   *low_multiple {
+                    if pivot + 2 > lm {
+                        break SearchResult::Conflict(pivot + 1);
+                    }
                 }
+                if pivot == high - 1 {
+                    break SearchResult::NoneFound;
+                        }
+                low = pivot + 1;
+                pivot += high_bit((high - pivot) / 2);
             },
-            Ok(d) => {
-                println!("Got unexpected reply {:02x}",d); 
-                // break Err(DALIcommandError::Framing) 
+            DaliSendResult::Framing => {
+                //println!("Found multiple");
                 *low_multiple = Some(pivot+1);
                 if low >= pivot {
+                    //println!("Conflict");
                     // There should only be one address <= pivot
-                    break SearchResult::ReplyError;
+                    break SearchResult::Conflict(pivot);
                 }
                 high = pivot;
-                pivot -= high_bit((pivot - low) / 2);
+                pivot -= high_bit((pivot - low) / 2) + 1;
                 
+                
+            },
+	    DaliSendResult::Answer(d) => {
+		println!("Got unexpected reply {:02x}",d); 
+		// break Err(DaliSendResult::Framing) 
+		*low_multiple = Some(pivot+1);
+		if low >= pivot {
+                    // There should only be one address <= pivot
+                break SearchResult::ReplyError;
+		}
+		high = pivot;
+		pivot -= high_bit((pivot - low) / 2);
+            
             }
-        };
+	    e => return SearchResult::DriverError(Box::new(e)),
+	}
     }
 }
 
 
-async fn find_devices_no_initialise(driver: &mut dyn DALIdriver, 
+async fn find_devices_no_initialise(driver: &mut dyn DaliDriver, 
                                         tx: &mut Sender<DiscoverItem>) 
-                                        -> Result<u32, Arc<dyn Error + Send + Sync>>
+                                        -> Result<u32, Box<dyn Error + Send + Sync>>
 {
     let mut current_search_addr = 0x010101;
     
@@ -170,7 +168,7 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
     
     let mut low_multiple = None;
 
-    let search_res: Result<u32,Arc<dyn Error + Send + Sync>> = loop {
+    let search_res: Result<u32,Box<dyn Error + Send + Sync>> = loop {
         //println!("Searching {:06x} - {:06x}", low, high); 
         match find_device(driver, low, high,
                           &mut high_single, &mut low_multiple,
@@ -180,14 +178,14 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                     long_address::set_search_addr_changed(driver, addr,
                                                           &mut current_search_addr);
                 if let Err(e) = res.await {
-                    return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
+                    return Err(Box::new(e))
                 };
 
-                let res = driver.send_command(&[cmd::QUERY_SHORT_ADDRESS, 0x00],
-                                              driver::PRIORITY_1 
-                                              | driver::EXPECT_ANSWER);
+                let res = driver.send_frame_16(
+		    &[cmd::QUERY_SHORT_ADDRESS, 0x00],
+                    driver::PRIORITY_1 | driver::EXPECT_ANSWER);
                 match res.await {
-                    Ok(short_addr) => {
+                    DaliSendResult::Answer(short_addr) => {
                         let short = if short_addr == 0xff {
                             None
                         } else {
@@ -203,15 +201,14 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                         {
                             Ok(()) => {},
                             Err(e) => 
-                                return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
+                                return Err(Box::new(e))
                         }; 
                         //println!("Found device 0x{:06x} with short address {}",
                         //addr, (short_addr>>1) + 1);
-                        let res = driver.send_command(&[cmd::WITHDRAW, 0x00],
-                                                      driver::PRIORITY_1);
-                        if let Err(e) = res.await {
-                            return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
-                        };
+                        let res = driver.send_frame_16(&[cmd::WITHDRAW, 0x00],
+                                                       driver::PRIORITY_1);
+                        res.await.check_send()?;
+
                         match (high_single, low_multiple) {
                             (Some(hs), Some(lm)) => {
                                 if hs < lm {
@@ -229,19 +226,17 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                                 panic!("Found device but high_single not set");
                             }
                         }
-
+			
                     },
-                    Err(DALIcommandError::Framing) 
-                        | Err(DALIcommandError::Timeout) => {
+                    DaliSendResult::Framing
+			| DaliSendResult::Timeout => {
                             low = 0;
-                        },
-                    Err(e) => {
-                        break Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
+			},
+                    res => {
+			break Err(Box::new(res))
                     }
-                }
-                               
-                
-            },
+		}
+	    },
             SearchResult::NoneFound => {
                 if high == TOP_SEARCH_ADDR {
                     break Ok(0);
@@ -249,18 +244,16 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                 high = TOP_SEARCH_ADDR;
             },
             SearchResult::Conflict(addr) => {
-                 let res = 
+                let res = 
                     long_address::set_search_addr_changed(driver, addr,
                                                           &mut current_search_addr);
                 if let Err(e) = res.await {
-                    return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
+                    return Err(Box::new(e))
                 };
 
-                let res = driver.send_command(&[cmd::WITHDRAW, 0x00],
+                let res = driver.send_frame_16(&[cmd::WITHDRAW, 0x00],
                                               driver::PRIORITY_1);
-                if let Err(e) = res.await {
-                    return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
-                };
+                res.await.check_send()?;
                 let msg = Ok(Discovered{
                     long:Some(addr),
                     short: None,
@@ -271,7 +264,7 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
                 {
                     Ok(()) => {},
                     Err(e) => 
-                        return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
+                        return Err(Box::new(e))
                 };
                 low = addr + 1;
                 high = TOP_SEARCH_ADDR;
@@ -284,7 +277,7 @@ async fn find_devices_no_initialise(driver: &mut dyn DALIdriver,
             SearchResult::DriverError(e) => {
                 break Err(e)
             }
-        }
+	}
     };
     
     //println!("Search terminated: {:?}", search_res);
@@ -307,9 +300,9 @@ pub struct Discovered
 }
 
 
-async fn discover_async(d: &mut dyn DALIdriver,
+async fn discover_async(d: &mut dyn DaliDriver,
                         tx: &mut Sender<DiscoverItem>)
-                        -> Result<(), Arc<dyn Error + Send + Sync>>
+                        -> Result<(), Box<dyn Error + Send + Sync>>
 {
     let mut found_short = [Option::<Long>::None;64];
     for index in 0..64usize {
@@ -322,84 +315,66 @@ async fn discover_async(d: &mut dyn DALIdriver,
                     found_short[index] = Some(l);
                     break Ok(l);
                 }
-                Err(DALIcommandError::Timeout) => {
+                Err(DaliSendResult::Timeout) => {
                     retry -= 1;
                     if retry == 0 {
                         //eprintln!("Timeout");
-                        break Err(DALIcommandError::Timeout)
+                        break Err(DaliSendResult::Timeout)
                     }
                 },
-                Err(DALIcommandError::Framing) => {
+                Err(DaliSendResult::Framing) => {
                     //eprintln!("Multiple");
-                    break Err(DALIcommandError::Framing)
+                    break Err(DaliSendResult::Framing)
                 },
-                Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
+                Err(e) => return Err(Box::new(e))
             }
         } {
             Ok(l) => {
-                match send_blocking(tx, 
-                                    Ok(Discovered{long:Some(l),
-                                                  short:Some(a),
-                                                  long_conflict: false, 
-                                                  short_conflict: false}))
-                    .await {
-                    Ok(()) => {},
-                    Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
-                };
+                send_blocking(tx, 
+                              Ok(Discovered{long:Some(l),
+                                            short:Some(a),
+                                            long_conflict: false, 
+                                            short_conflict: false}))
+                    .await?;
             },
-            Err(DALIcommandError::Framing) => {
-                match send_blocking(tx, Ok(Discovered{long:None,
-                                                      short:Some(a),
-                                                      long_conflict: false, 
-                                                      short_conflict: true}))
-                .await {
-                    Ok(()) => {},
-                    Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
-                };
+            Err(DaliSendResult::Framing) => {
+                send_blocking(tx, Ok(Discovered{long:None,
+                                                short:Some(a),
+                                                long_conflict: false, 
+                                                short_conflict: true}))
+                    .await?;
             },
-            Err(DALIcommandError::Timeout) => {
+            Err(DaliSendResult::Timeout) => {
                 
             },
-            Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
+            Err(e) => return Err(Box::new(e))
             
         }
         
     }
-    match d.send_command(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
-                         driver::PRIORITY_1|driver::SEND_TWICE).await {
-        Ok(_) => (),
-        Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
-    };
-
+    d.send_frame_16(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
+                         driver::PRIORITY_1|driver::SEND_TWICE)
+	.await.check_send()?;
+    
+    
     let mut current_search_addr = 0xffffffff;
 
     // WITHDRAW all devices with a short address
     for index in 0..64usize {
         if let Some(l) = found_short[index] {
-            match long_address::set_search_addr_changed(d,l, 
-                                                        &mut current_search_addr)
-                .await {
-                    Ok(_) => {},
-                    Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
-                }
-            match d.send_command(&[cmd::WITHDRAW, 0x00],
-                                      driver::PRIORITY_1).await {
-                Ok(_) => {},
-                Err(e) => return Err(Arc::new(e) as Arc<dyn Error + Send + Sync>)
-            }
-        }
+            long_address::set_search_addr_changed(d,l, &mut current_search_addr)
+                .await?;                }
+        d.send_frame_16(&[cmd::WITHDRAW, 0x00],
+                        driver::PRIORITY_1).await.check_send()?;
     }
-    match find_devices_no_initialise(d,tx).await {
-        Ok(_) => {},
-        Err(e) => return Err(e)
-    }
+    find_devices_no_initialise(d,tx).await?;
     Ok(())
 }
 
-pub type DiscoverItem = Result<Discovered, Arc<dyn Error + Send + Sync>>;
+pub type DiscoverItem = Result<Discovered, Box<dyn Error + Send + Sync>>;
 
 async fn discover_thread(mut tx: tokio::sync::mpsc::Sender<DiscoverItem>,
-                   driver: Arc<Mutex<Box<dyn DALIdriver>>>)
+                   driver: Arc<Mutex<Box<dyn DaliDriver>>>)
 {
     let mut d = driver.lock().await;
     match discover_async(d.as_mut(), &mut tx).await {
@@ -408,7 +383,7 @@ async fn discover_thread(mut tx: tokio::sync::mpsc::Sender<DiscoverItem>,
             send_blocking(&mut tx, Err(e)).await.unwrap();
         }
     };
-    match d.send_command(&[cmd::TERMINATE, 0x00], driver::PRIORITY_1).await
+    match d.send_frame_16(&[cmd::TERMINATE, 0x00], driver::PRIORITY_1).await
     {
         // Ignore any errors
         _ => {}
@@ -423,7 +398,7 @@ async fn discover_thread(mut tx: tokio::sync::mpsc::Sender<DiscoverItem>,
 /// after WITHDRAWing the addresses found,
 /// search for unaddressed devices using COMPARE.
 
-pub fn find_quick<'a>(driver: Arc<Mutex<Box<dyn DALIdriver>>>)
+pub fn find_quick<'a>(driver: Arc<Mutex<Box<dyn DaliDriver>>>)
                   -> Pin<Box<dyn Stream<Item = DiscoverItem>>>
 {
     let (tx,rx) = tokio::sync::mpsc::channel(64);

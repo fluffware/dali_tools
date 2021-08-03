@@ -1,9 +1,9 @@
 use dali_tools as dali;
-use dali::drivers::helvar::helvar510::Helvar510driver;
 use dali::base::address::{Short,Group,Address::Broadcast};
-use dali::drivers::driver::{self, DALIdriver, DALIcommandError};
+use dali::drivers::driver::{self, DaliDriver, DaliSendResult};
 use dali::defs::gear::cmd;
 use std::error::Error;
+use dali::drivers::command_utils::{send_device_cmd, send_device_level};
 
 
 #[macro_use]
@@ -21,69 +21,73 @@ fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration)
 }
              
              
-async fn identify(driver: &mut dyn DALIdriver, space: u8, mark: u8) -> Result<(), Box<dyn Error>>
+async fn identify(driver: &mut dyn DaliDriver, space: u8, mark: u8) -> Result<(), Box<dyn Error>>
 {
-    driver.send_command(&[cmd::DTR0, 0],0).await?;
-    driver.send_device_cmd(&Broadcast, cmd::SET_FADE_TIME,
-                           driver::SEND_TWICE).await?;
-    driver.send_device_cmd(&Broadcast, cmd::SET_EXTENDED_FADE_TIME,
-                           driver::SEND_TWICE).await?;
+    driver.send_frame_16(&[cmd::DTR0, 0],0).await.check_send()?;
+    send_device_cmd(driver, &Broadcast, cmd::SET_FADE_TIME,
+                    driver::SEND_TWICE).await.check_send()?;
+    send_device_cmd(driver, &Broadcast, cmd::SET_EXTENDED_FADE_TIME,
+                    driver::SEND_TWICE).await.check_send()?;
     let mut last = std::time::Instant::now();
-    driver.send_device_level(&Broadcast, mark,0).await?;
+    send_device_level(driver, &Broadcast, mark,0).await.check_send()?;
     sleep_delta(&mut last, BIT_TIME);
-    driver.send_device_level(&Broadcast, space,0).await?;
+    send_device_level(driver, &Broadcast, space,0).await.check_send()?;
     let mut current = space;
     let mut next = mark;
     for b in 0..6 {
         println!("Current:: {} Next: {}", current, next);
         sleep_delta(&mut last, HALF_BIT_TIME);
-        driver.send_device_level(&Group::new(8+b), next,0).await?;
+        send_device_level(driver, &Group::new(8+b), next,0).await.check_send()?;
         sleep_delta(&mut last, HALF_BIT_TIME);
-        driver.send_device_level(&Broadcast, next,0).await?;
+        send_device_level(driver, &Broadcast, next,0).await.check_send()?;
         std::mem::swap(&mut current, &mut next);
     }
     
     Ok(())
 }
         
-async fn identify_setup(driver: &mut dyn DALIdriver) -> Result<(), Box<dyn Error>>
+async fn identify_setup(driver: &mut dyn DaliDriver) -> Result<(), Box<dyn Error>>
 {
-    driver.send_device_cmd(&Broadcast,
-                           cmd::RECALL_MIN_LEVEL,0).await?;
+    send_device_cmd(driver, &Broadcast,
+                    cmd::RECALL_MIN_LEVEL,0).await.check_send()?;
     for i in 0..64 {
         
         
-        match driver.send_device_cmd(&Short::new(i+1),
-                                     cmd::QUERY_DEVICE_TYPE,
-                                     driver::EXPECT_ANSWER).await {
-            Ok(t) => {
+        match send_device_cmd(driver, &Short::new(i+1),
+                              cmd::QUERY_DEVICE_TYPE,
+                              driver::EXPECT_ANSWER).await {
+            DaliSendResult::Answer(t) => {
                 println!("Addr {} has type {}", i+1, t);
             },
-            Err(DALIcommandError::Timeout) => continue,
-            Err(e) => return Err(Box::new(e))
+            DaliSendResult::Timeout => continue,
+            e => return Err(Box::new(e))
         }
-        driver.send_device_cmd(&Short::new(i+1),
-                               cmd::RECALL_MAX_LEVEL,0).await?;
+        send_device_cmd(driver, &Short::new(i+1),
+                        cmd::RECALL_MAX_LEVEL,0).await.check_send()?;
         for b in 0..6 {
             let cmd = b + if (i & (1<<b)) == 0 {
                 cmd::REMOVE_FROM_GROUP_7
             } else {
                 cmd::ADD_TO_GROUP_7
             };
-            driver.send_device_cmd(&Short::new(i+1),
-                                   cmd,driver::SEND_TWICE).await?;
+            send_device_cmd(driver, &Short::new(i+1),
+                            cmd,driver::SEND_TWICE).await.check_send()?;
         }
-        driver.send_device_cmd(&Short::new(i+1),
-                               cmd::RECALL_MIN_LEVEL,0).await?;
+        send_device_cmd(driver, &Short::new(i+1),
+                        cmd::RECALL_MIN_LEVEL,0).await.check_send()?;
     }
     Ok(())
 }
 
 #[tokio::main]
 async fn main() {
-      let matches = 
+    if let Err(e) = dali::drivers::init() {
+	println!("Failed to initialize DALI drivers: {}", e);
+    }
+    let matches = 
         clap_app!(identify =>
                   (about: "Identify DALI gear")
+		  (@arg DEVICE: -d --device "Select DALI-device")
                   (@arg setup: -s --setup "Prepare groups for identification")
                   (@arg repeat: -r --repeat "Repeat identification sequence")
                   (@arg SPACE: --space +takes_value "Idle level")
@@ -119,10 +123,18 @@ async fn main() {
         }
     };
     println!("Space: {} Mark: {}", space,mark);
-    let driver = &mut Helvar510driver::new();
+    let device_name = 
+	matches.value_of("ADDR").unwrap_or_else(|| "default");
+    let mut driver = match dali::drivers::open(device_name) {
+	Ok(d) => d,
+        Err(e) => {
+            println!("Failed to open DAIL device: {}", e);
+	    return;
+        }
+    };
 
     if setup {
-        match identify_setup(driver).await {
+        match identify_setup(&mut *driver).await {
             Ok(_) => {},
             Err(e) => {
                 println!("{}", e);
@@ -131,7 +143,7 @@ async fn main() {
     }
 
     loop {
-        match identify(driver,space,mark).await {
+        match identify(&mut *driver,space,mark).await {
             Ok(_) => {},
             Err(e) => {
                 println!("{}", e);

@@ -3,7 +3,8 @@ use crate::base::address::{Short,Long,BusAddress};
 use crate::base::device_type::DeviceType;
 use crate::defs::gear::cmd;
 use crate::defs::common::MASK;
-use crate::drivers::driver::{self, DALIdriver, DALIcommandError};
+use crate::drivers::driver::{self, DaliDriver, DaliSendResult};
+use crate::drivers::command_utils::send_device_cmd;
 use std::fmt;
 use tokio::join;
 
@@ -209,67 +210,70 @@ impl fmt::Display for DeviceInfo
 
 }
 
-async fn send_query(d: &mut dyn DALIdriver, addr: Short, cmd: u8)
-              -> Result<Option<u8>, DALIcommandError>
+async fn send_query(d: &mut dyn DaliDriver, addr: Short, cmd: u8)
+              -> Result<Option<u8>, DaliSendResult>
 {
-    match d.send_device_cmd(&addr, cmd, 
-                            driver::EXPECT_ANSWER).await {
-        Ok(s) => Ok(Some(s)),
-        Err(DALIcommandError::Timeout) => Ok(None),
-        Err(e) => return Err(e)
+    match send_device_cmd(d,&addr, cmd, 
+                          driver::EXPECT_ANSWER).await {
+        DaliSendResult::Answer(s) => Ok(Some(s)),
+        DaliSendResult::Timeout => Ok(None),
+        e => return Err(e)
     }
 }
 
-pub async fn read_device_info(d: &mut dyn DALIdriver, addr: Short)
-                          -> Result<DeviceInfo, DALIcommandError>
+pub async fn read_device_info(d: &mut dyn DaliDriver, addr: Short)
+                          -> Result<DeviceInfo, DaliSendResult>
 {
     let mut info: DeviceInfo = DeviceInfo::new();
     info.short_addr = Some(addr);
-    info.status = match d.send_device_cmd(&addr, cmd::QUERY_STATUS, 
+    info.status = match send_device_cmd(d, &addr, cmd::QUERY_STATUS, 
                                           driver::EXPECT_ANSWER).await {
-        Ok(s) => Some(GearStatus::new(s)),
-        Err(DALIcommandError::Timeout) => None,
-        Err(e) => return Err(e)
+        DaliSendResult::Answer(s) => Some(GearStatus::new(s)),
+        DaliSendResult::Timeout => None,
+        e => return Err(e)
     };
-    match d.send_device_cmd(&addr, cmd::QUERY_DEVICE_TYPE, 
-                            driver::EXPECT_ANSWER).await {
-        Ok(t) if t == MASK => {
+    match send_device_cmd(d, &addr, cmd::QUERY_DEVICE_TYPE, 
+                          driver::EXPECT_ANSWER).await {
+        DaliSendResult::Answer(MASK) => {
             loop {
-                match d.send_device_cmd(&addr,
+                match send_device_cmd(d,&addr,
                                         cmd::QUERY_NEXT_DEVICE_TYPE, 
                                         driver::EXPECT_ANSWER).await {
-                    Ok(MASK) => break,
-                    Ok(t) => info.device_types.push(DeviceType::new(t)),
-                    Err(DALIcommandError::Timeout) => break,
-                    Err(e) => return Err(e)
-                };
+                    DaliSendResult::Answer(MASK) => break,
+                    DaliSendResult::Answer(t) =>
+			info.device_types.push(DeviceType::new(t)),
+                    DaliSendResult::Timeout => break,
+                    e => return Err(e)
+                 };
             }
         },
-        Ok(t) => info.device_types.push(DeviceType::new(t)),
-        Err(DALIcommandError::Timeout) => {},
-        Err(e) => return Err(e)
+        DaliSendResult::Answer(t) => info.device_types.push(DeviceType::new(t)),
+	DaliSendResult::Timeout => {},
+	e => return Err(e)
     };
-
+    
     info.groups =
-        match join!(d.send_device_cmd(&addr, cmd::QUERY_GROUPS_0_7, 
+        match join!(send_device_cmd(d,&addr, cmd::QUERY_GROUPS_0_7, 
                                       driver::EXPECT_ANSWER),
-                    d.send_device_cmd(&addr, cmd::QUERY_GROUPS_8_15, 
+                    send_device_cmd(d,&addr, cmd::QUERY_GROUPS_8_15, 
                                       driver::EXPECT_ANSWER)) {
-            (Ok(l), Ok(h)) => Some(((h as u16) << 8) | (l as u16)),
-            (Err(DALIcommandError::Timeout), _) => None,
-            (_, Err(DALIcommandError::Timeout)) => None,
-            (Err(e),_) | (_, Err(e)) => return Err(e)
+            (DaliSendResult::Answer(l), DaliSendResult::Answer(h)) => 
+		Some(((h as u16) << 8) | (l as u16)),
+            (DaliSendResult::Timeout, _) => None,
+            (_, DaliSendResult::Timeout) => None,
+            (e,DaliSendResult::Answer(_)) => return Err(e),
+	    (_, e) => return Err(e)
         };
 
     let mut scenes = [MASK;16];
     let mut scene_count = 0;
     for i in 0..16 {
-        scenes[i] = match d.send_device_cmd(&addr, 
-                                            cmd::QUERY_SCENE_LEVEL_0+(i as u8), 
-                                            driver::EXPECT_ANSWER).await {
-            Ok(s) => {scene_count += 1; s},
-            Err(DALIcommandError::Timeout) => MASK,
-            Err(e) => return Err(e)
+        scenes[i] = match send_device_cmd(d, &addr, 
+                                          cmd::QUERY_SCENE_LEVEL_0+(i as u8), 
+                                          driver::EXPECT_ANSWER).await {
+            DaliSendResult::Answer(s) => {scene_count += 1; s},
+            DaliSendResult::Timeout => MASK,
+            e => return Err(e)
         };
     }
     if scene_count > 0 {
@@ -296,11 +300,11 @@ pub async fn read_device_info(d: &mut dyn DALIdriver, addr: Short)
     info.extended_fade_time = send_query(d, addr,
                                          cmd::QUERY_EXTENDED_FADE_TIME).await?;
 
-    match d.send_device_cmd(&addr, cmd::QUERY_LIGHT_SOURCE_TYPE, 
+    match send_device_cmd(d,&addr, cmd::QUERY_LIGHT_SOURCE_TYPE, 
                             driver::EXPECT_ANSWER).await {
-        Ok(s) => info.light_source_types.push(s),
-        Err(DALIcommandError::Timeout) => {},
-        Err(e) => return Err(e)
+        DaliSendResult::Answer(s) => info.light_source_types.push(s),
+        DaliSendResult::Timeout => {},
+        e => return Err(e)
     };
     
     Ok(info)

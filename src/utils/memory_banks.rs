@@ -1,6 +1,7 @@
 use crate::base::address::{Short};
 use crate::defs::gear::cmd;
-use crate::drivers::driver::{self, DALIdriver, DALIcommandError};
+use crate::drivers::driver::{self, DaliDriver, DaliSendResult};
+use crate::drivers::command_utils::send_device_cmd;
 use std::fmt;
 use std::error::Error;
 use std::convert::TryInto;
@@ -96,24 +97,24 @@ impl fmt::Display for MemoryBank0Info
     }
 }
 
-pub async fn read_range(d: &mut dyn DALIdriver, addr: Short, 
+pub async fn read_range(d: &mut dyn DaliDriver, addr: Short, 
                         bank: u8, start: u8, length: u8)
                         -> Result<Vec<u8>, Box<dyn Error>>
 {
-    d.send_command(&[cmd::DTR1, bank], 0).await?;
-    d.send_command(&[cmd::DTR0, start], 0).await?;
+    d.send_frame_16(&[cmd::DTR1, bank], 0).await.check_send()?;
+    d.send_frame_16(&[cmd::DTR0, start], 0).await.check_send()?;
     let mut data = Vec::new();
     for _ in 0..length {
-         match d.send_device_cmd(&addr, cmd::READ_MEMORY_LOCATION, 
+         match send_device_cmd(d,&addr, cmd::READ_MEMORY_LOCATION, 
                                  driver::EXPECT_ANSWER).await {
-             Ok(d) => data.push(d),
-             Err(DALIcommandError::Timeout) => break,
-             Err(e) => return Err(Box::new(e))
+             DaliSendResult::Answer(d) => data.push(d),
+             DaliSendResult::Timeout => break,
+             e => return Err(Box::new(e))
          }
     }
 
-    let dtr = d.send_device_cmd(&addr, cmd::QUERY_CONTENT_DTR0, 
-                                driver::EXPECT_ANSWER).await?;
+    let dtr = send_device_cmd(d,&addr, cmd::QUERY_CONTENT_DTR0, 
+                                driver::EXPECT_ANSWER).await.check_answer()?;
     if length as usize == data.len() {
         if dtr != length + start {
             return Err(Box::new(MemoryError::LengthMismatch));
@@ -126,7 +127,7 @@ pub async fn read_range(d: &mut dyn DALIdriver, addr: Short,
     Ok(data)
 }
 
-pub async fn read_bank_0(d: &mut dyn DALIdriver, addr: Short, 
+pub async fn read_bank_0(d: &mut dyn DaliDriver, addr: Short, 
                          _bank: u8, _start: u8, _length: u8) 
                          -> Result<MemoryBank0Info, Box<dyn Error>>
 {

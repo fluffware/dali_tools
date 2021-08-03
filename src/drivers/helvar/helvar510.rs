@@ -5,15 +5,15 @@ use std::pin::Pin;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use tokio::stream::Stream;
 use core::future::Future;
 use tokio::time::{Instant};
 use super::idle_future::IdleFuture;
-
+use std::collections::HashMap;
 use libusb_async::{Context,DeviceHandle};
 
-use super::super::driver::{self,DALIdriver, DALIcommandError};
-use super::super::monitor::{DALImonitor, DaliBusEvent, DaliBusEventType};
+use super::super::driver::{self,DaliDriver, DaliSendResult, DriverInfo, 
+			   OpenError, 
+			   DaliBusEvent, DaliBusEventType};
 use super::super::utils::{DALIreq, DALIcmd};
 use std::error::Error;
 use std::fmt;
@@ -29,7 +29,7 @@ pub struct Helvar510driver
 }
 
 #[derive(Debug,Clone)]
-pub enum DriverError
+enum DriverError
 {
     OK,
     OpenFailed,
@@ -53,7 +53,14 @@ impl From<libusb_async::Error> for DriverError
 impl fmt::Display for DriverError
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "No error")
+	match self {
+	    DriverError::OK => write!(f, "No error"),
+	    DriverError::OpenFailed => write!(f, "Open failed"),
+	    DriverError::NoInterfaceFound => write!(f, "No interface found"),
+	    DriverError::CommandError => write!(f, "Copmmand error"),
+	    DriverError::UsbError => write!(f, "USB error"),
+	    DriverError::ReplyingFailed => write!(f, "Replying failed"),
+	}
     }
 }
 fn send_hid_report(dev: &DeviceHandle, data: &[u8])
@@ -72,9 +79,8 @@ fn read_hid_report(dev: &DeviceHandle)
     trans.submit()
 }
 
-async fn driver_engine(rx: &mut mpsc::Receiver<DALIreq>, 
-                       monitor: Arc<Mutex<Option<mpsc::Sender<DaliBusEvent>>>>) 
-                 -> Result<(),DriverError> {
+fn setup_usb() -> Result<DeviceHandle, DriverError>
+{
     let usb_ctxt = Context::new()?;
     // Print out information about all connected devices
     let mut device: Option<DeviceHandle> = None;
@@ -116,6 +122,12 @@ async fn driver_engine(rx: &mut mpsc::Receiver<DALIreq>,
         device.detach_kernel_driver(0)?;
     }
     device.claim_interface(0)?;
+    Ok(device)
+}
+
+async fn driver_engine(device: DeviceHandle, rx: &mut mpsc::Receiver<DALIreq>, 
+                       monitor: Arc<Mutex<Option<mpsc::Sender<DaliBusEvent>>>>) 
+                 -> Result<(),DriverError> {
     
     let send = [2, 0x82, 0x04];
     match send_hid_report(&device, &send).await {
@@ -135,13 +147,14 @@ async fn driver_engine(rx: &mut mpsc::Receiver<DALIreq>,
             Ok(r) = &mut read_reply => {
                 let buf = r.get_buffer();
                 let buf_len =  buf.len();
+		//println!("Received len: {}",buf_len);
                 if buf_len > 3 {
                     let res = 
                         match buf[1] {
-                            0x6d => Some(Ok(buf[2])),
-                            0x6c => Some(Err(DALIcommandError::Framing)),
-                            0x64 => Some(Ok(0)),
-                            0x6b => Some(Err(DALIcommandError::Timeout)),
+                            0x6d => Some(DaliSendResult::Answer(buf[2])),
+                            0x6c => Some(DaliSendResult::Framing),
+                            0x64 => Some(DaliSendResult::OK),
+                            0x6b => Some(DaliSendResult::Timeout),
                             _ => None
                         };
                     if let Some(res) = res {
@@ -156,18 +169,18 @@ async fn driver_engine(rx: &mut mpsc::Receiver<DALIreq>,
                             match buf[1] {
                                 0x50 | 0x54 if buf_len >= 4 => {
                                     Some(DaliBusEvent{
-                                        timestamp: Instant::now(),
+                                        timestamp: Instant::now().into_std(),
                                         event: DaliBusEventType::Recv16bitFrame(buf[2..4].try_into().unwrap())})
                                         
                                 },
                                 0x65 | 0x66 => {
                                     Some(DaliBusEvent{
-                                        timestamp: Instant::now(),
+                                        timestamp: Instant::now().into_std(),
                                         event: DaliBusEventType::Recv8bitFrame(buf[2])}) 
                                 },
                                 0x30 if buf_len >= 5 => {
                                     Some(DaliBusEvent{
-                                        timestamp: Instant::now(),
+                                        timestamp: Instant::now().into_std(),
                                         event: DaliBusEventType::Recv24bitFrame(buf[2..5].try_into().unwrap())})
                                 },
                                 _ => None
@@ -193,10 +206,8 @@ async fn driver_engine(rx: &mut mpsc::Receiver<DALIreq>,
             req = &mut recv, if pending_req.is_none() => {
                 match req {
                     Some(req) => {
-                        /*
                         println!("Got cmd: {:02x} {:02x}", 
                                  req.cmd.data[0], req.cmd.data[1]);
-                         */
                         let mut cmd = 0x50;
                         if (req.cmd.flags & driver::SEND_TWICE) != 0 {
                             cmd |= 0x80;
@@ -230,17 +241,16 @@ async fn driver_engine(rx: &mut mpsc::Receiver<DALIreq>,
 
 }
     
-async fn driver_thread(mut rx: mpsc::Receiver<DALIreq>,
+async fn driver_thread(device: DeviceHandle, mut rx: mpsc::Receiver<DALIreq>,
                        monitor: Arc<Mutex<Option<mpsc::Sender<DaliBusEvent>>>>)
                        -> DriverError
 {
-    
-    let res = driver_engine(&mut rx, monitor).await.map_or_else(|e| e, |_r| DriverError::OK);
+    let res = driver_engine(device, &mut rx, monitor).await.map_or_else(|e| e, |_r| DriverError::OK);
     loop {
         match rx.recv().await {
             Some(req) => {
                 match req.reply.send(
-                    Err(DALIcommandError::DriverError(Arc::new(res.clone())))) {
+                    DaliSendResult::DriverError(Box::new(res.clone()))) {
                     _ => {} // Ignore any errors
                 }
             },
@@ -254,11 +264,19 @@ async fn driver_thread(mut rx: mpsc::Receiver<DALIreq>,
 
 impl Helvar510driver
 {
-    pub fn new() -> Helvar510driver {
+    fn new() -> Result<Helvar510driver, DriverError> {
         let (tx, rx) = mpsc::channel::<DALIreq>(10);
         let monitor = Arc::new(Mutex::new(None));
-        let join = tokio::spawn(driver_thread(rx, monitor.clone()));
-        Helvar510driver{send_cmd: Some(tx),join: Some(join), send_monitor: monitor}
+	let device = match setup_usb() {
+	    Ok(d) => d,
+	    Err(_e) => return Err(DriverError::UsbError)
+	};
+
+        let join = tokio::spawn(driver_thread(device, rx, monitor.clone()));
+        let driver = Helvar510driver{send_cmd: Some(tx),
+				     join: Some(join),
+				     send_monitor: monitor};
+	Ok(driver)
     }
 
     pub async fn stop(&mut self) {
@@ -274,15 +292,15 @@ impl Helvar510driver
 
                           
 
-impl DALIdriver for Helvar510driver
+impl DaliDriver for Helvar510driver
 {
-    fn send_command(&mut self, cmd: &[u8;2], flags:u16) -> 
-        Pin<Box<dyn Future<Output = Result<u8, DALIcommandError>> + Send>>
+    fn send_frame(&mut self, cmd: &[u8;4], flags:u16) -> 
+        Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
     {
         let (tx, rx) = oneshot::channel();
         let req = DALIreq{cmd: DALIcmd 
                           {
-                              data: [cmd[0], cmd[1], 0],
+                              data: cmd.clone(),
                               flags: flags
                           },
                           reply: tx
@@ -293,20 +311,27 @@ impl DALIdriver for Helvar510driver
                 Box::pin(async {
                     match rx.await {
                             Ok(r) => r,
-                        Err(e) => Err(DALIcommandError::DriverError(Arc::new(e)))
+                        Err(e) => DaliSendResult::DriverError(Box::new(e))
                     }
                     })
             },
             Err(_) => {
                 Box::pin(async {
-                    Err(DALIcommandError::DriverError(
-                        Arc::new(DriverError::CommandError)))
+                    DaliSendResult::DriverError(
+                        Box::new(DriverError::CommandError))
                 })
             }
         }
     }
+    
+    fn next_bus_event(&mut self) -> Pin<Box<dyn Future<Output = DaliBusEvent> + Send>>
+    {
+	Box::pin(std::future::ready(DaliBusEvent{
+	    timestamp: Instant::now().into_std(),
+	    event: DaliBusEventType::NotImplemented}))
+    }
 }
-
+/*
 impl DALImonitor for Helvar510driver
 {
     fn monitor_stream(&mut self) 
@@ -322,5 +347,23 @@ impl DALImonitor for Helvar510driver
         let (tx, rx) = mpsc::channel::<DaliBusEvent>(10);
         *monitor = Some(tx);
         return Some(Box::pin(rx));
+    }
+}
+*/
+fn driver_open(_params: HashMap<String, String>)
+		     -> Result<Box<dyn DaliDriver>, OpenError>
+{
+    match Helvar510driver::new() {
+	Err(e) => Err(OpenError::DriverError(Box::new(e))),
+	Ok(d) => Ok(Box::new(d))
+    }
+}
+
+pub fn driver_info() -> DriverInfo
+{
+    DriverInfo{name: "Helvar510".to_string(), 
+	       description: 
+	       "Driver for Helvar 510 USB DALI-adapter".to_string(),
+	       open: driver_open
     }
 }

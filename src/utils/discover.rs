@@ -3,7 +3,8 @@ use crate::drivers::driver::{self,DaliDriver,DaliSendResult};
 use crate::utils::long_address;
 use crate::base::address::Short;
 use crate::base::address::Long;
-use tokio::stream::Stream;
+use tokio_stream::Stream;
+use tokio_stream::wrappers::ReceiverStream;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -405,5 +406,5 @@ pub fn find_quick<'a>(driver: Arc<Mutex<Box<dyn DaliDriver>>>)
     tokio::spawn(async move {
         discover_thread(tx,driver).await
     });
-    return Box::pin(rx)
+    return Box::pin(ReceiverStream::new(rx))
 }

@@ -24,7 +24,7 @@ pub mod drivers {
     pub use driver::driver_names as driver_names;
     pub mod utils;
     pub mod command_utils;
-    pub mod monitor;
+    //pub mod monitor;
     #[cfg(feature = "helvar510_driver")]
     pub mod helvar {
         pub mod helvar510;

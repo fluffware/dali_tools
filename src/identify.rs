@@ -4,7 +4,7 @@ use dali::drivers::driver::{self, DaliDriver, DaliSendResult};
 use dali::defs::gear::cmd;
 use std::error::Error;
 use dali::drivers::command_utils::{send_device_cmd, send_device_level};
-
+use dali::drivers::driver::OpenError;
 
 #[macro_use]
 extern crate clap;
@@ -87,7 +87,7 @@ async fn main() {
     let matches = 
         clap_app!(identify =>
                   (about: "Identify DALI gear")
-		  (@arg DEVICE: -d --device "Select DALI-device")
+		  (@arg DEVICE: -d --device +takes_value "Select DALI-device")
                   (@arg setup: -s --setup "Prepare groups for identification")
                   (@arg repeat: -r --repeat "Repeat identification sequence")
                   (@arg SPACE: --space +takes_value "Idle level")
@@ -124,11 +124,17 @@ async fn main() {
     };
     println!("Space: {} Mark: {}", space,mark);
     let device_name = 
-	matches.value_of("ADDR").unwrap_or_else(|| "default");
+	matches.value_of("DEVICE").unwrap_or_else(|| "default");
     let mut driver = match dali::drivers::open(device_name) {
 	Ok(d) => d,
         Err(e) => {
             println!("Failed to open DAIL device: {}", e);
+	    if let OpenError::NotFound  = e {
+		println!("Available drivers:");
+		for name in dali::drivers::driver_names() {
+		    println!("  {}", name);
+		}
+	    }
 	    return;
         }
     };

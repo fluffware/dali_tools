@@ -3,7 +3,7 @@ use dali_tools as dali;
 use dali::utils::discover;
 use std::sync::{Arc};
 use tokio::sync::Mutex;
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() {

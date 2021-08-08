@@ -130,7 +130,7 @@ const CMD_DESCR_16: [&'static str;256] = [
     "Remove from group 13",
     "Remove from group 14",
     "Remove from group 15",
-    "Store DTR ad short address", // 0x80
+    "Store DTR as short address", // 0x80
     "Enable write memory",
     "",
     "",

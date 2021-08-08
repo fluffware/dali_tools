@@ -6,11 +6,11 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
-pub const PRIORITY_1:u16 = 0x00;
-pub const PRIORITY_2:u16 = 0x01;
-pub const PRIORITY_3:u16 = 0x02;
-pub const PRIORITY_4:u16 = 0x03;
-pub const PRIORITY_5:u16 = 0x04;
+pub const PRIORITY_1:u16 = 0x01;
+pub const PRIORITY_2:u16 = 0x02;
+pub const PRIORITY_3:u16 = 0x03;
+pub const PRIORITY_4:u16 = 0x04;
+pub const PRIORITY_5:u16 = 0x05;
     
 pub const SEND_TWICE:u16 = 0x08;
 pub const EXPECT_ANSWER:u16 = 0x10; // Expect an answer
@@ -39,7 +39,7 @@ impl fmt::Display for DaliSendResult
             DaliSendResult::Answer(r) => write!(f, "Answer: 0x{:02x}", r),
             DaliSendResult::Timeout => write!(f, "Command timed out"),
             DaliSendResult::Framing => write!(f, "Invalid framing"),
-            DaliSendResult::DriverError(e) =>write!(f, "Drive error {}", e.to_string()),
+            DaliSendResult::DriverError(e) =>write!(f, "Drive error: {}", e.to_string()),
             DaliSendResult::Pending => write!(f,"Pending")
         }
     }

@@ -11,11 +11,13 @@ pru_driver= []
 
 [dependencies]
 futures	= "0.3.*"
-tokio= {version = "0.2.*", features = ["macros", "rt-core", "time", "stream", "io-util", "sync", "blocking"]}
+tokio= {version = "1.9", features = ["macros", "rt-multi-thread", "time", "io-util", "sync", "fs"]}
+tokio-stream = "0.1"
 clap = "2.33.*"
 rand = "*"
 libusb-async = { git = "https://github.com/fluffware/libusb-rs-async.git", optional = true}
 lazy_static = "1"
+nix = "0.22"
 
 [[bin]]
 name = "dali_tools"

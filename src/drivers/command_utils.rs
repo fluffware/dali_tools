@@ -2,6 +2,7 @@ use super::driver::{DaliDriver, DaliSendResult};
 use crate::base::address::BusAddress;
 use std::pin::Pin;
 use std::future::Future;
+use crate::defs::gear::cmd;
 
 /// Send addressed DALI commands
 ///
@@ -28,6 +29,39 @@ pub fn send_device_level(driver: &mut dyn DaliDriver,
     Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
 {
     driver.send_frame_16(&[addr.bus_address(), level], flags)
+}
+
+/// Set value of DTR0
+///
+/// # Arguments
+/// * `dtr` - Value to store in DTR0
+
+pub fn send_set_dtr0(driver: &mut dyn DaliDriver, dtr: u8, flags: u16) ->
+    Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
+{
+    driver.send_frame_16(&[cmd::DTR0, dtr], flags)
+}
+
+/// Set value of DTR1
+///
+/// # Arguments
+/// * `dtr` - Value to store in DTR1
+
+pub fn send_set_dtr1(driver: &mut dyn DaliDriver, dtr: u8, flags: u16) ->
+    Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
+{
+    driver.send_frame_16(&[cmd::DTR1, dtr], flags)
+}
+
+/// Set value of DTR2
+///
+/// # Arguments
+/// * `dtr` - Value to store in DTR2
+
+pub fn send_set_dtr2(driver: &mut dyn DaliDriver, dtr: u8, flags: u16) ->
+    Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
+{
+    driver.send_frame_16(&[cmd::DTR2, dtr], flags)
 }
 
 

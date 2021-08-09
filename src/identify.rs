@@ -3,7 +3,9 @@ use dali::base::address::{Short,Group,Address::Broadcast};
 use dali::drivers::driver::{self, DaliDriver, DaliSendResult};
 use dali::defs::gear::cmd;
 use std::error::Error;
-use dali::drivers::command_utils::{send_device_cmd, send_device_level};
+use dali::drivers::command_utils::{send_device_cmd, 
+                                   send_device_level,
+                                   send_set_dtr0};
 use dali::drivers::driver::OpenError;
 
 #[macro_use]
@@ -23,11 +25,11 @@ fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration)
              
 async fn identify(driver: &mut dyn DaliDriver, space: u8, mark: u8) -> Result<(), Box<dyn Error>>
 {
-    driver.send_frame_16(&[cmd::DTR0, 0],0).await.check_send()?;
+    send_set_dtr0(driver, 0, driver::PRIORITY_5).await.check_send()?;
     send_device_cmd(driver, &Broadcast, cmd::SET_FADE_TIME,
-                    driver::SEND_TWICE).await.check_send()?;
+                    driver::SEND_TWICE|driver::PRIORITY_1).await.check_send()?;
     send_device_cmd(driver, &Broadcast, cmd::SET_EXTENDED_FADE_TIME,
-                    driver::SEND_TWICE).await.check_send()?;
+                    driver::SEND_TWICE|driver::PRIORITY_1).await.check_send()?;
     let mut last = std::time::Instant::now();
     send_device_level(driver, &Broadcast, mark,0).await.check_send()?;
     sleep_delta(&mut last, BIT_TIME);

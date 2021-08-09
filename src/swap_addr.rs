@@ -121,7 +121,7 @@ async fn main() {
         }
     };
     let device_name = 
-	matches.value_of("ADDR").unwrap_or("default");
+	matches.value_of("DEVICE").unwrap_or("default");
     let mut driver = match dali::drivers::open(device_name) {
 	Ok(d) => d,
 	Err(e) => {

@@ -80,11 +80,46 @@ impl Drop for PruDriver
     }
 }
 
-async fn send_frame<W>(device: &mut W, req: &DALIreq, seq_no: &mut u8) 
-		       -> Option<DaliSendResult>
+fn reply_to_send_result(reply: &DaliMsg) -> DaliSendResult
+{
+    return match reply.result() {
+	dali_msg::DALI_SEND_DONE =>
+	    DaliSendResult::OK,
+        dali_msg::DALI_RECV_FRAME=> {
+            if reply.bit_length() == 8 {
+                // eprintln!("Answer: {}", reply.frame_data()[0]);
+                DaliSendResult::Answer(reply.frame_data()[0])
+            } else {
+                DaliSendResult::DriverError("Answer must be 8 bits"
+					    .into())
+            }
+        },
+	dali_msg::DALI_ERR_FRAMING =>
+	    DaliSendResult::Framing,
+	dali_msg::DALI_NO_REPLY =>
+	    DaliSendResult::Timeout,
+		            dali_msg::DALI_ERR_BUS_BUSY =>
+	    DaliSendResult::DriverError(
+		"Bus busy, frame not sent".into()),
+	dali_msg::DALI_ERR_DRIVER =>
+	    DaliSendResult::DriverError("Device error".into()),
+	dali_msg::DALI_ERR_TIMING =>
+	    DaliSendResult::DriverError("Internal timing error"
+					.into()),
+		            _ =>
+	    DaliSendResult::DriverError(
+		format!("Device result: {}", reply.result()).into())
+    }
+}
+
+async fn send_frame<W>(dev_write: &mut W,
+                       dev_read: &mut mpsc::Receiver<DaliMsg>, 
+                       req: &DALIreq, seq_no: &mut u8) 
+		       -> DaliSendResult
     where W: Write
 {
     let mut msg;
+    // Create a frame of correct length
     match req.cmd.flags & 0x0700 {
 	driver::LENGTH_8 => {
 	    msg = DaliMsg::frame8(*seq_no, &req.cmd.data);
@@ -101,8 +136,8 @@ async fn send_frame<W>(device: &mut W, req: &DALIreq, seq_no: &mut u8)
 	    msg = DaliMsg::frame25(*seq_no, &req.cmd.data);
 	},
 	_ => {
-	    return Some(DaliSendResult::DriverError(
-		"Illegal frame length".into()))
+	    return DaliSendResult::DriverError(
+		"Illegal frame length".into())
 	}
     };
     
@@ -125,60 +160,50 @@ async fn send_frame<W>(device: &mut W, req: &DALIreq, seq_no: &mut u8)
 
     msg.set_retry(true);
 
+    //eprintln!("Sending: {:x?}", msg);
+    let send_seq = msg.seq();
+    let expect_answer = msg.expect_answer();
     let block = unsafe {
 	std::mem::transmute::<DaliMsg, [u8;8]>(msg)
     };
-    if let Err(e) = device.write_all(&block) {
+    if let Err(e) = dev_write.write_all(&block) {
 	eprintln!("Send failed: {}", e);
-	return Some(DaliSendResult::DriverError(e.into()));
+	return DaliSendResult::DriverError(e.into());
     }
-    if let Err(e) = device.flush() {
+    if let Err(e) = dev_write.flush() {
 	eprintln!("Flush failed: {}", e);
-	return Some(DaliSendResult::DriverError(e.into()));
+	return DaliSendResult::DriverError(e.into());
     }
-    return None;
+
+    loop {
+        // Wait for reply
+        let reply_msg = dev_read.recv().await;
+        match reply_msg {
+	    Some(reply) => {
+                if reply.seq() == send_seq {
+                    if !(expect_answer 
+		         && reply.result() == dali_msg::DALI_SEND_DONE) {
+                        return reply_to_send_result(&reply);
+                    }
+                } else {
+                    return DaliSendResult::DriverError(
+		        format!("Unexpected sequence number in reply: \
+                                 Got {}, expected",
+                                reply.seq()).into())
+                }
+            },
+	    None => 
+                return DaliSendResult::DriverError("Read channel closed".into())
+        }
+    }
 }
 
 fn handle_block(msg: &DaliMsg,
-		reply: &mut Option<oneshot::Sender<DaliSendResult>>,
-		mrtx: &mut Option<oneshot::Sender<DaliBusEvent>>,
-		wait_seq: &mut u8)
+		mrtx: &mut Option<oneshot::Sender<DaliBusEvent>>)
 {
-    if *wait_seq > 0 && *wait_seq == msg.seq() {
-	if msg.result() == dali_msg::DALI_SEND_DONE && msg.expect_answer() {
-	    /* Need to wait for answer */
-	} else {
-	    if let Some(reply) = reply.take() {
-		let result = match msg.result() {
-		    dali_msg::DALI_SEND_DONE =>
-			DaliSendResult::OK,
-		    dali_msg::DALI_ERR_FRAMING =>
-			DaliSendResult::Framing,
-		    dali_msg::DALI_NO_REPLY =>
-			DaliSendResult::Timeout,
-		    dali_msg::DALI_ERR_BUS_LOW =>
-			DaliSendResult::DriverError("Bus has no power".into()),
-		    dali_msg::DALI_INFO_BUS_HIGH =>
-		    DaliSendResult::DriverError("Bus power restored".into()),
-		    dali_msg::DALI_ERR_BUS_BUSY =>
-			DaliSendResult::DriverError(
-			    "Bus busy, frame not sent".into()),
-		    dali_msg::DALI_ERR_DRIVER =>
-		    DaliSendResult::DriverError("Device error".into()),
-		    dali_msg::DALI_ERR_TIMING =>
-			DaliSendResult::DriverError("Internal timing error"
-						    .into()),
-		    _ =>
-			DaliSendResult::DriverError(
-			    format!("Device result: {}", msg.result()) .into())
-		};
-		
-		reply.send(result).unwrap_or(());
-		
-	    }
-	}
-    } else if msg.seq() == 0 {
-	let event_type = match msg.result() {
+    let event_type;
+    if msg.seq() == 0 {
+        event_type = match msg.result() {
 	    dali_msg::DALI_RECV_FRAME => {
 		let frame = msg.frame_data();
 		match msg.bit_length() {
@@ -206,13 +231,16 @@ fn handle_block(msg: &DaliMsg,
 		DaliBusEventType::DriverError(
 		    format!("Device result: {}", msg.result()) .into())
 	};
-	let event = DaliBusEvent {
-	    timestamp: Instant::now(),
-	    event: event_type
-	};
-	if let Some(mrtx) = mrtx.take() {
-	    mrtx.send(event).unwrap_or(());
-	}
+    } else {
+        event_type = DaliBusEventType::DriverError(
+	    format!("Expected 0 as sequence number, got {}", msg.seq()).into())
+    }
+    let event = DaliBusEvent {
+	timestamp: Instant::now(),
+	event: event_type
+    };
+    if let Some(mrtx) = mrtx.take() {
+	mrtx.send(event).unwrap_or(());
     }
 }
 
@@ -262,15 +290,12 @@ async fn driver_thread(mut dev_write: File,
 
     
     let mut seq_no = 1;
-    let mut wait_seq = 0;
-    let mut reply = None;
     let mut mrtx: Option<oneshot::Sender<DaliBusEvent>> = None;
     loop {
 	tokio::select!{
 	    msg = dev_read.recv() => {
 		match msg {
-		    Some(msg) => handle_block(&msg, &mut reply, &mut mrtx,
-					      &mut wait_seq),
+		    Some(msg) => handle_block(&msg, &mut mrtx),
 		    None => break
 		}
 	    },
@@ -278,15 +303,9 @@ async fn driver_thread(mut dev_write: File,
 		match req {
 		    Some(req) => {
 			//eprintln!("Got {:?}",req);
-			wait_seq = seq_no;
-			if let Some(tx) = 
-			    send_frame(&mut dev_write, &req, &mut seq_no).await 
-			{
-			    req.reply.send(tx).unwrap_or(());
-			    reply = None;
-			} else {
-			    reply = Some(req.reply);
-			}
+			let tx = 
+			    send_frame(&mut dev_write, &mut dev_read, &req, &mut seq_no).await;
+			req.reply.send(tx).unwrap_or(());
 		    },
 		    None => break
 		}

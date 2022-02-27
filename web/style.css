@@ -19,8 +19,9 @@ body {
     border: solid;
 }
     
-svg circle {
+svg rect {
     fill: none;
     stroke: black;
     stroke-width: 3px;
 }
+

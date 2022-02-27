@@ -46,20 +46,22 @@ function startup()
 	var draw_width = 50;
 	var draw_height = 50;
 	console.log(video_settings);
-	var aspect = video_settings.aspectRatio;
-	if (draw_height * aspect >= draw_width) {
-	    draw_height = draw_width / aspect;
+	if (draw_height * video_settings.width >= draw_width * video_settings.height) {
+	    draw_height = Math.round(draw_width * video_settings.height / video_settings.width);
 	} else {
-	    draw_width = draw_height * aspect;
+	    draw_width = Math.round(draw_height * video_settings.width / video_settings.height);
 	}
 	capture.height = draw_height;
 	capture.width = draw_width;
 	captureCtxt.fillRect(0,0,draw_width, draw_height);
-	
-	var data_width = 13;
-	var data_height = 13;
+
+	var sense_x = Math.floor(draw_width / 4);
+	var sense_y = Math.floor(draw_height / 4);
+	var sense_width = Math.floor(draw_width / 2);
+	var sense_height = Math.floor(draw_height / 2);
 	var trend_pos= 0;
-	var prev= [0,0];
+	var prev_intensity;
+	var diff_filter = [0,0,0];
 	var max_peak = 0;
 	var prev_peak = undefined;
 	var pos = 0;
@@ -67,25 +69,49 @@ function startup()
 	    function() {
 		captureCtxt.drawImage(video, 0,0,draw_width,draw_height);
 		var pixels =
-		    captureCtxt.getImageData((draw_width-data_width)/2,
-					     (draw_height-data_height)/2,
-					     data_width,data_height).data;
-		var sum = 0;
-		for (p = 0; p < data_width * data_width*4; p+= 4) {
-		    sum += pixels[p] + pixels[p+1] + pixels[p+2]; 
+		    captureCtxt.getImageData(0, 0,
+					     draw_width,draw_height).data;
+		var full_sum = 0;
+		for (p = 0; p < draw_height * draw_width*4; p+= 4) {
+		    full_sum += pixels[p] + pixels[p+1] + pixels[p+2]; 
 		}
-		var intensity = sum/(data_width*data_height*3);
+		var sense_sum = 0;
+		for (y = sense_y; y < sense_y + sense_height; y++) {
+		    let p_start = (y*draw_width+sense_x) * 4;
+		    let p_end = p_start + sense_width * 4;
+		    for (p = p_start; p < p_end; p+= 4) {
+			sense_sum += pixels[p] + pixels[p+1] + pixels[p+2];
+		    }
+		}
+		var sense_intensity = sense_sum/(sense_width*sense_height*3);
+		var full_intensity = full_sum/(draw_width*draw_height*3);
 		//console.log(intensity);
 		trendCtxt.fillStyle = "#000";
 		trendCtxt.fillRect(trend_pos, 0, 1, trend.height);
 		trendCtxt.fillStyle = "#fff";
-		trendCtxt.fillRect(trend_pos, (intensity - prev[1])*5 + 128, 1, 1);
-		trend_pos += 1;
+		trendCtxt.fillRect(trend_pos, 50, 1, 1);
+		
+		trendCtxt.fillStyle = "#f00";
+		trendCtxt.fillRect(trend_pos, sense_intensity * 50 / full_intensity, 1, 1);
 		if (trend_pos >= trend.width) trend_pos = 0;
 		
-		prev[1] = prev[0];
-		prev[0] = intensity;
-		let diff = intensity - prev[1];
+
+		let diff = sense_intensity - prev_intensity;
+		prev_intensity = sense_intensity;
+
+		let filtered = diff;
+		for (let i = 0; i < diff_filter.length - 1; i++) {
+		    filtered += diff_filter[i];
+		    diff_filter[i] = diff_filter[i + 1];
+		}
+		filtered += diff_filter[diff_filter.length - 1];
+		diff_filter[diff_filter.length - 1] = diff;
+		diff = filtered / (diff_filter.length + 1);
+
+		trendCtxt.fillStyle = "#0f0";
+		trendCtxt.fillRect(trend_pos, diff * 5 + 128, 1, 1);
+		trend_pos += 1;
+
 		if (max_peak < Math.abs(diff)) {
 		    max_peak = Math.abs(diff);
 		}

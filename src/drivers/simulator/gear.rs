@@ -1,13 +1,20 @@
-use super::device::DALIsimDevice;
-use crate::drivers::driver::DALIcommandError;
+use super::device::{DaliSimHost, DaliSimEvent, DaliSimDevice};
 use crate::defs::common::MASK;
 use crate::defs::gear:: {cmd,status,device_type, light_source};
-use crate::drivers::driver;
+use crate::drivers::driver::{DaliBusEventType};
+use crate::drivers::send_flags::Flags;
 use std::time::Instant;
 use std::time::Duration;
+use std::future;
+use std::future::Future;
+use std::pin::Pin;
+use super::timing::{FRAME_8_DURATION, FRAME_16_DURATION,
+		    REPLY_DELAY, SEND_TWICE_DURATION, INIT_TIMEOUT};
 
 extern crate rand;
 use rand::Rng;
+
+type DynResult<T> =  Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(PartialEq)]
 pub enum InitialisationState
@@ -24,7 +31,8 @@ pub enum WriteEnableState
     DISABLED
 }
 
-pub struct DALIsimGear
+#[allow(dead_code)]
+pub struct DaliSimGear
 {
     pub powered: bool,
     
@@ -62,14 +70,19 @@ pub struct DALIsimGear
     fade_start_time: Instant,
     fade_duration: Duration,
     init_start_time: Instant,
+
+    last_event: DaliSimEvent, // Previous event, used for detecting send twice
+    source_id: u32,
+    host: Option<Box<dyn DaliSimHost>>,
 }
 
-impl DALIsimGear
+impl DaliSimGear
 {
-    pub fn new() -> DALIsimGear
+    pub fn new() -> DaliSimGear
     {
         let phm = 0x01;
-        DALIsimGear{
+	let now = Instant::now();
+        DaliSimGear{
             powered: true,
             
             actual_level: 0xfe,
@@ -100,17 +113,21 @@ impl DALIsimGear
             // Scaled by 128
             fade_end_level: 0,
             
-            fade_start_time: Instant::now(),
+            fade_start_time: now,
             fade_duration: Duration::new(0,0),
-            init_start_time: Instant::now(),
-                
+            init_start_time: now,
+            last_event: DaliSimEvent{
+		source_id: 0,
+		timestamp: now,
+		event_type: DaliBusEventType::BusPowerOff},
+	    source_id: 0,
+	    host: None,
         }
     }
 }
 
-const INIT_TIMEOUT: Duration = Duration::from_secs(15*60);
 
-fn check_timers(dev: &mut DALIsimGear)
+fn check_timers(dev: &mut DaliSimGear)
 {
     if dev.initialisation_state != InitialisationState::DISABLED {
         if dev.init_start_time.elapsed() >= INIT_TIMEOUT {
@@ -169,7 +186,7 @@ const FADE_MULTIPLIER : [Duration;5] = [
     Duration::from_secs(60)
 ];
     
-fn start_fade_time(dev: &mut DALIsimGear)
+fn start_fade_time(dev: &mut DaliSimGear)
 {
     if (dev.fade & 0xf0) == 0x00 && (dev.extended_fade_time & 0x70) == 0x00 {
         // No fade, change instantly
@@ -198,13 +215,13 @@ fn start_fade_time(dev: &mut DALIsimGear)
     dev.fade_end_level = (dev.target_level as i16) << 7;
 }
 
-fn query_status_flag(dev: &DALIsimGear, flag: u8)
-                     ->Result<u8, DALIcommandError>
+fn query_status_flag(dev: &DaliSimGear, flag: u8)
+                     -> Option<DaliBusEventType>
 {
     if (dev.status & flag) != 0 {
-        driver::YES
+        YES_REPLY
     } else {
-        driver::NO
+        NO_REPLY
     } 
 }
 
@@ -217,28 +234,31 @@ pub const STORED_STATUS_FLAGS : u8 =
     | status::RESET_STATE
     | status::POWER_CYCLE;
 
-fn update_status(dev: &mut DALIsimGear) 
+fn update_status(dev: &mut DaliSimGear) 
 {
     dev.status = (dev.status & STORED_STATUS_FLAGS) 
         | if dev.actual_level > 0 {status::LAMP_ON} else {0}
         | if dev.short_address == MASK {status::NO_ADDRESS} else {0};
 }
 
-fn yes_no(p: bool) -> Result<u8, DALIcommandError>
+fn yes_no(p: bool) -> Option<DaliBusEventType>
 {
-    if p {driver::YES} else {driver::NO}
+    if p {YES_REPLY} else {NO_REPLY}
 }
 
-fn device_cmd(dev: &mut DALIsimGear, _addr: u8, cmd: u8, _flags: u16) 
-              ->Result<u8, DALIcommandError>
+const YES_REPLY: Option<DaliBusEventType>= Some(DaliBusEventType::Frame8(MASK));
+const NO_REPLY: Option<DaliBusEventType> = None;
+
+fn device_cmd(dev: &mut DaliSimGear, _addr: u8, cmd: u8, _flags: Flags) 
+              -> Option<DaliBusEventType>
 {
     match cmd {
         cmd::QUERY_STATUS => {
             update_status(dev);
-            return Ok(dev.status)
+            return Some(DaliBusEventType::Frame8(dev.status))
         },
         cmd::QUERY_CONTROL_GEAR_PRESENT => 
-            return driver::YES,
+            return YES_REPLY,
         cmd::QUERY_CONTROL_GEAR_FAILURE =>
             return query_status_flag(&dev, status::GEAR_FAILURE),
         cmd::QUERY_LAMP_FAILURE =>
@@ -253,89 +273,104 @@ fn device_cmd(dev: &mut DALIsimGear, _addr: u8, cmd: u8, _flags: u16)
             return yes_no(dev.short_address == MASK)
         },
         cmd::QUERY_VERSION_NUMBER => {
-            return Ok(0xff)
+            return Some(DaliBusEventType::Frame8(2<<2 + 0)) // 2.0
         },
         cmd::QUERY_DEVICE_TYPE =>
-            return Ok(device_type::LED),
+            return Some(DaliBusEventType::Frame8(device_type::LED)),
         cmd::QUERY_NEXT_DEVICE_TYPE =>
-            return driver::NO,
+            return NO_REPLY,
         cmd::QUERY_PHYSICAL_MINIMUM =>
-            return Ok(dev.phm),
+            return Some(DaliBusEventType::Frame8(dev.phm)),
         cmd::QUERY_POWER_FAILURE =>
             return query_status_flag(&dev, status::POWER_CYCLE),
         cmd::QUERY_CONTENT_DTR0 =>
-            return Ok(dev.dtr0),
+            return Some(DaliBusEventType::Frame8(dev.dtr0)),
         cmd::QUERY_CONTENT_DTR1 =>
-            return Ok(dev.dtr1),
+            return Some(DaliBusEventType::Frame8(dev.dtr1)),
         cmd::QUERY_CONTENT_DTR2 =>
-            return Ok(dev.dtr2),
+            return Some(DaliBusEventType::Frame8(dev.dtr2)),
         cmd::QUERY_OPERATING_MODE =>
-            return Ok(0x00),
+            return Some(DaliBusEventType::Frame8(0x00)),
         cmd::QUERY_LIGHT_SOURCE_TYPE =>
-            return Ok(light_source::LED),
+            return Some(DaliBusEventType::Frame8(light_source::LED)),
         cmd::QUERY_ACTUAL_LEVEL =>
-            return Ok(dev.actual_level),
+            return Some(DaliBusEventType::Frame8(dev.actual_level)),
         cmd::QUERY_MAX_LEVEL =>
-            return Ok(dev.max_level),
+            return Some(DaliBusEventType::Frame8(dev.max_level)),
         cmd::QUERY_MIN_LEVEL =>
-            return Ok(dev.min_level),
+            return Some(DaliBusEventType::Frame8(dev.min_level)),
         cmd::QUERY_POWER_ON_LEVEL =>
-            return Ok(dev.power_on_level),
+            return Some(DaliBusEventType::Frame8(dev.power_on_level)),
         cmd::QUERY_SYSTEM_FAILURE_LEVEL =>
-            return Ok(dev.system_failure_level),
+            return Some(DaliBusEventType::Frame8(dev.system_failure_level)),
         cmd::QUERY_FADE =>
-            return Ok(dev.fade),
-        cmd::QUERY_SCENE_LEVEL_0..= cmd::QUERY_SCENE_LEVEL_15 =>
-            return Ok(dev.scene[(cmd - cmd::QUERY_SCENE_LEVEL_0) as usize]),
-        cmd::QUERY_GROUPS_0_7 =>
-            return Ok((dev.gear_groups & 0xff) as u8),
-        cmd::QUERY_GROUPS_8_15 =>
-            return Ok((dev.gear_groups >> 8) as u8),
-        cmd::QUERY_RANDOM_ADDRESS_H =>
-            return Ok((dev.random_address >> 16) as u8),
-        cmd::QUERY_RANDOM_ADDRESS_M =>
-            return Ok(((dev.random_address >> 8) & 0xff) as u8),
-        cmd::QUERY_RANDOM_ADDRESS_L =>
-            return Ok((dev.random_address & 0xff) as u8),        
+            return Some(DaliBusEventType::Frame8(dev.fade)),
+        cmd::QUERY_SCENE_LEVEL_0..= cmd::QUERY_SCENE_LEVEL_15 => {
+	    let level = dev.scene[(cmd - cmd::QUERY_SCENE_LEVEL_0) as usize];
+            return Some(DaliBusEventType::Frame8(level))
+	},
+        cmd::QUERY_GROUPS_0_7 => {
+	    let groups = (dev.gear_groups & 0xff) as u8;
+            return Some(DaliBusEventType::Frame8(groups))
+	},
+        cmd::QUERY_GROUPS_8_15 => {
+	    let groups = (dev.gear_groups >> 8) as u8;
+            return Some(DaliBusEventType::Frame8(groups))
+	},
+        cmd::QUERY_RANDOM_ADDRESS_H => {
+	    let addr = (dev.random_address >> 16) as u8;
+            return Some(DaliBusEventType::Frame8(addr))
+	},
+        cmd::QUERY_RANDOM_ADDRESS_M => {
+	    let addr = ((dev.random_address >> 8) & 0xff) as u8;
+            return Some(DaliBusEventType::Frame8(addr));
+	},
+        cmd::QUERY_RANDOM_ADDRESS_L => {
+	    let addr = (dev.random_address & 0xff) as u8; 
+            return Some(DaliBusEventType::Frame8(addr))
+	},
         _ => {}
     }
-    Err(DALIcommandError::Timeout)
+    None
 }
 
-fn special_cmd(dev: &mut DALIsimGear, cmd: u8, data: u8, flags: u16) 
-              ->Result<u8, DALIcommandError>
+fn special_cmd(dev: &mut DaliSimGear, cmd: u8, data: u8, flags: Flags) 
+              -> Option<DaliBusEventType>
 {
     //eprintln!("Special cmd: {:02x}", cmd);
     match cmd {
         cmd::TERMINATE => {
             dev.initialisation_state = InitialisationState::DISABLED;
             // TODO stop identification
-            driver::NO
+            NO_REPLY
         },
-        cmd::INITIALISE if flags & driver::SEND_TWICE != 0=> {
+        cmd::INITIALISE if flags.send_twice() => {
             if (((data & 0x81) == 0x01) 
                 && (data >> 1) == dev.short_address)
                 || (data == 0xff && dev.short_address == MASK)
                 || data == 0x00
             {
+		println!("Initialised"); 
                 // TODO restart initialisation timer 
                 dev.initialisation_state = InitialisationState::ENABLED;
             }
             
-            driver::NO
+            NO_REPLY
         },
-        cmd::RANDOMISE if flags & driver::SEND_TWICE != 0=> {
+        cmd::RANDOMISE if flags.send_twice() => {
             if dev.initialisation_state != InitialisationState::DISABLED {
-                dev.random_address = rand::thread_rng().gen_range(0, 0xffffff);
+                dev.random_address = rand::thread_rng().gen_range(0..=0xffffff);
             }
-            driver::NO
+            NO_REPLY
         },
         cmd::COMPARE => {
+	    println!("Comparing: 0x{:06x} <=  0x{:06x}", 
+		    dev.random_address,  dev.search_address);
             if dev.initialisation_state == InitialisationState::ENABLED
                 && dev.random_address <= dev.search_address {
-                    driver::YES
+                    YES_REPLY
                 } else {
-                    driver::NO
+                    NO_REPLY
                 }
         },
         cmd::WITHDRAW => {
@@ -343,28 +378,28 @@ fn special_cmd(dev: &mut DALIsimGear, cmd: u8, data: u8, flags: u16)
                 && dev.random_address == dev.search_address {
                     dev.initialisation_state = InitialisationState::WITHDRAWN; 
                 }
-            driver::NO
+            NO_REPLY
         },
         cmd::SEARCHADDRH => {
             if dev.initialisation_state != InitialisationState::DISABLED {
                 dev.search_address =
                     (dev.search_address & 0x00ffff) | ((data as u32) << 16);
             }
-            driver::NO
+            NO_REPLY
         },
         cmd::SEARCHADDRM => {
             if dev.initialisation_state != InitialisationState::DISABLED {
                 dev.search_address =
                     (dev.search_address & 0xff00ff) | ((data as u32) << 8);
             }
-            driver::NO
+            NO_REPLY
         },
         cmd::SEARCHADDRL => {
             if dev.initialisation_state != InitialisationState::DISABLED {
                 dev.search_address =
                     (dev.search_address & 0xffff00) | (data as u32);
             }
-            driver::NO
+            NO_REPLY
         },
         
         cmd::PROGRAM_SHORT_ADDRESS => {
@@ -375,72 +410,108 @@ fn special_cmd(dev: &mut DALIsimGear, cmd: u8, data: u8, flags: u16)
                     dev.short_address = MASK;
                 }
             }
-            driver::NO            
+            NO_REPLY         
         },
         cmd::QUERY_SHORT_ADDRESS => {
             if dev.initialisation_state != InitialisationState::DISABLED
                 && dev.search_address == dev.random_address {
                     eprintln!("Query_Short_Address: {}", dev.short_address);
-                    Ok((dev.short_address<<1) | 0x01)
+                    Some(DaliBusEventType::Frame8((dev.short_address<<1) |0x01))
                 } else {
-                    driver::NO            
+                    NO_REPLY
                 }
         },
         cmd::DTR0 => {
             dev.dtr0 = data;
-            driver::NO
+            NO_REPLY
         },
         cmd::DTR1 => {
             dev.dtr1 = data;
-            driver::NO
+            NO_REPLY
         },
         cmd::DTR2 => {
             dev.dtr2 = data;
-            driver::NO
+            NO_REPLY
         },
         
         _ => {
-            driver::NO
+            NO_REPLY
         }
     }
 }
 
-impl DALIsimDevice for DALIsimGear
+
+
+impl DaliSimDevice for DaliSimGear
 {
-    fn power(&mut self, on: bool)
+    fn start(&mut self, mut host: Box<dyn DaliSimHost>)
+	     -> Pin<Box<dyn Future<Output = DynResult<()>> + Send>>
     {
-        self.powered = on;
+	self.source_id = host.next_source_id();
+	self.host = Some(host);
+	Box::pin(future::ready(Ok(())))
     }
     
-    fn forward16(&mut self, cmd: &[u8], flags:u16) 
-                 ->Result<u8, DALIcommandError>
+    fn stop(&mut self) -> Pin<Box<dyn Future<Output = DynResult<()>> + Send>>
     {
-        /*eprintln!("Gear {} received: {:02x} {:02x}", self.short_address,
-                  cmd[0], cmd[1]);*/
-        match cmd[0] >> 1 {
-            addr @ 0x00..=0x3f => {
-                if addr == self.short_address {
-                    return device_cmd(self, cmd[0], cmd[1], flags);
-                }
-            },
-            addr @ 0x40..=0x4f => {
-                if self.gear_groups & (1<<(addr & 0x0f)) != 0 {
-                    return device_cmd(self, cmd[0], cmd[1], flags);
-                }
-            },
-            0x7e => {
-                if self.short_address == MASK {
-                    return device_cmd(self, cmd[0], cmd[1], flags);
-                }
-            },
-            0x7f => {
-                return device_cmd(self, cmd[0], cmd[1], flags);
-            },
-            _ => {
-                return special_cmd(self, cmd[0], cmd[1], flags);
-            }
-        };
-        driver::NO
+	Box::pin(future::ready(Ok(())))
+    }
+    
+    fn event(&mut self,event: &DaliSimEvent) 
+             -> Option<DaliSimEvent>
+    {
+	let mut flags = Flags::Empty;
+	match (event, &self.last_event) {
+	    (DaliSimEvent{timestamp: ts, 
+			  event_type: DaliBusEventType::Frame16(cmd), ..},
+	     DaliSimEvent{timestamp: last_ts, 
+			  event_type: DaliBusEventType::Frame16(last_cmd),
+			  ..}) => {
+		if ts.duration_since(*last_ts) 
+		    < FRAME_16_DURATION + SEND_TWICE_DURATION 
+		    && cmd == last_cmd
+		{
+		    flags = flags | Flags::SendTwice(true);
+		}
+	    },
+	    _ => {}
+	}
+	self.last_event = event.clone();
+	let event_type = match event.event_type {
+	    DaliBusEventType::Frame16(cmd) => {
+		eprintln!("Gear {} received: {:02x} {:02x}", 
+			   self.short_address,
+			   cmd[0], cmd[1]);
+		match cmd[0] >> 1 {
+		    addr @ 0x00..=0x3f if addr == self.short_address => {
+			device_cmd(self, cmd[0], cmd[1], flags)
+		    },
+		    addr @ 0x40..=0x4f 
+			if self.gear_groups & (1<<(addr & 0x0f)) != 0 => 
+		    {
+			device_cmd(self, cmd[0], cmd[1], flags)
+		    },
+		    0x7e if self.short_address == MASK => {
+			device_cmd(self, cmd[0], cmd[1], flags)
+		    },
+		    0x7f => {
+			device_cmd(self, cmd[0], cmd[1], flags)
+		    },
+		    _ => {
+			special_cmd(self, cmd[0], cmd[1], flags)
+		    }
+		}
+	    },
+	    _ => None
+	};
+	if let Some(event_type) = event_type {
+	    Some(DaliSimEvent{
+		source_id: self.source_id,
+		timestamp: Instant::now() +FRAME_8_DURATION+REPLY_DELAY,
+		event_type})
+	} else {
+	    None
+	}
     }
 }
 

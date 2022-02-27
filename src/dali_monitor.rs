@@ -22,25 +22,27 @@ async fn main() {
 	matches.value_of("DEVICE").unwrap_or("default");
     let mut driver = dali::drivers::open(device_name).unwrap();
     loop {
-        let DaliBusEvent{timestamp, event} = driver.next_bus_event().await;
-        print!("{:5}:", timestamp.duration_since(last_ts).as_millis());
-        last_ts = timestamp;
-        match event {
-            DaliBusEventType::Recv24bitFrame(ref pkt) => {
-                for b in pkt {
-                    print!(" {:02x}", b);
-                }
-                print!(" ");
-                println!("{}",decode::decode_packet(pkt))
-            },
-            DaliBusEventType::Recv16bitFrame(ref pkt) => {
-                for b in pkt {
-                    print!(" {:02x}", b);
-                }
-                print!("    ");
-                println!("{}",decode::decode_packet(pkt))
-            },
-            _ => println!("{:?}", event)
-        }
+        if let Ok(DaliBusEvent{timestamp, event_type, ..}) 
+	    = driver.next_bus_event().await {
+		print!("{:5}:", timestamp.duration_since(last_ts).as_millis());
+		last_ts = timestamp;
+		match event_type {
+		    DaliBusEventType::Frame24(ref pkt) => {
+			for b in pkt {
+			    print!(" {:02x}", b);
+			}
+			print!(" ");
+			println!("{}",decode::decode_packet(pkt))
+		    },
+		    DaliBusEventType::Frame16(ref pkt) => {
+			for b in pkt {
+			    print!(" {:02x}", b);
+			}
+			print!("    ");
+			println!("{}",decode::decode_packet(pkt))
+		    },
+		    _ => println!("{:?}", event_type)
+		}
+	    }
     }
 }

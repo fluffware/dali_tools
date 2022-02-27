@@ -10,11 +10,14 @@ use tokio::time::{Instant};
 use super::idle_future::IdleFuture;
 use std::collections::HashMap;
 use libusb_async::{Context,DeviceHandle};
-
-use super::super::driver::{self,DaliDriver, DaliSendResult, DriverInfo, 
-			   OpenError, 
-			   DaliBusEvent, DaliBusEventType};
-use super::super::utils::{DALIreq, DALIcmd};
+use crate::drivers;
+use drivers::driver::{DaliDriver, DaliSendResult, DriverInfo, 
+		      OpenError,
+		      DaliFrame,
+		      DaliBusEventResult,
+		      DaliBusEvent, DaliBusEventType};
+use drivers::send_flags::Flags;
+use drivers::utils::{DALIreq, DALIcmd};
 use std::error::Error;
 use std::fmt;
 use std::convert::TryInto;
@@ -170,18 +173,18 @@ async fn driver_engine(device: DeviceHandle, rx: &mut mpsc::Receiver<DALIreq>,
                                 0x50 | 0x54 if buf_len >= 4 => {
                                     Some(DaliBusEvent{
                                         timestamp: Instant::now().into_std(),
-                                        event: DaliBusEventType::Recv16bitFrame(buf[2..4].try_into().unwrap())})
+                                        event_type: DaliBusEventType::Frame16(buf[2..4].try_into().unwrap())})
                                         
                                 },
                                 0x65 | 0x66 => {
                                     Some(DaliBusEvent{
                                         timestamp: Instant::now().into_std(),
-                                        event: DaliBusEventType::Recv8bitFrame(buf[2])}) 
+                                        event_type: DaliBusEventType::Frame8(buf[2])}) 
                                 },
                                 0x30 if buf_len >= 5 => {
                                     Some(DaliBusEvent{
                                         timestamp: Instant::now().into_std(),
-                                        event: DaliBusEventType::Recv24bitFrame(buf[2..5].try_into().unwrap())})
+                                        event_type: DaliBusEventType::Frame24(buf[2..5].try_into().unwrap())})
                                 },
                                 _ => None
                             };
@@ -205,22 +208,24 @@ async fn driver_engine(device: DeviceHandle, rx: &mut mpsc::Receiver<DALIreq>,
             },
             req = &mut recv, if pending_req.is_none() => {
                 match req {
-                    Some(req) => {
+                    Some(DALIreq{cmd: DALIcmd{data: DaliFrame::Frame16(data),
+					      ref flags},..}) => {
                         println!("Got cmd: {:02x} {:02x}", 
-                                 req.cmd.data[0], req.cmd.data[1]);
+                                 data[0], data[1]);
                         let mut cmd = 0x50;
-                        if (req.cmd.flags & driver::SEND_TWICE) != 0 {
+                        if flags.send_twice() {
                             cmd |= 0x80;
                         }
-                        if (req.cmd.flags & driver::EXPECT_ANSWER) != 0 {
+                        if flags.expect_answer() {
                             cmd |= 0x04;
                         }
                         
-                        let send = [0x3, cmd,req.cmd.data[0], req.cmd.data[1]];
+                        let send = [0x3, cmd,data[0], data[1]];
                         write_cmd.set(send_hid_report(&device, &send));
-                        pending_req = Some(req);
+                        pending_req = req;
                         
-                    }, 
+                    },
+		    Some(_) => println!("Unsupported frame"),
                     None => {
                         println!("No clients");
                         break
@@ -294,9 +299,13 @@ impl Helvar510driver
 
 impl DaliDriver for Helvar510driver
 {
-    fn send_frame(&mut self, cmd: &[u8;4], flags:u16) -> 
+    fn send_frame(&mut self, cmd: DaliFrame, flags:Flags) -> 
         Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
     {
+	if !matches!(cmd, DaliFrame::Frame16(_)) {
+	    return Box::pin(std::future::ready(DaliSendResult::DriverError(
+		"Only 16-bit frames supported when sending".into())))
+	}
         let (tx, rx) = oneshot::channel();
         let req = DALIreq{cmd: DALIcmd 
                           {
@@ -324,11 +333,9 @@ impl DaliDriver for Helvar510driver
         }
     }
     
-    fn next_bus_event(&mut self) -> Pin<Box<dyn Future<Output = DaliBusEvent> + Send>>
+    fn next_bus_event(&mut self) -> Pin<Box<dyn Future<Output = DaliBusEventResult>>>
     {
-	Box::pin(std::future::ready(DaliBusEvent{
-	    timestamp: Instant::now().into_std(),
-	    event: DaliBusEventType::NotImplemented}))
+	Box::pin(std::future::ready(Err("Not implemented".into())))
     }
 }
 /*

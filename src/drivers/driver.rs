@@ -5,20 +5,8 @@ use std::fmt;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
-
-pub const PRIORITY_1:u16 = 0x01;
-pub const PRIORITY_2:u16 = 0x02;
-pub const PRIORITY_3:u16 = 0x03;
-pub const PRIORITY_4:u16 = 0x04;
-pub const PRIORITY_5:u16 = 0x05;
-    
-pub const SEND_TWICE:u16 = 0x08;
-pub const EXPECT_ANSWER:u16 = 0x10; // Expect an answer
-
-pub const LENGTH_8: u16 = 0x100;
-pub const LENGTH_16: u16 = 0x200;
-pub const LENGTH_24: u16 = 0x300;
-pub const LENGTH_25: u16 = 0x400; // Proprietary configuration
+use super::send_flags::Flags;
+use core::convert::TryFrom;
 
 #[derive(Debug)]
 pub enum DaliSendResult
@@ -66,29 +54,93 @@ impl DaliSendResult
 	}
     }
 }
+
 #[derive(Debug)]
+pub struct FromDaliBusEventTypeError {}
+impl Error for FromDaliBusEventTypeError {}
+impl fmt::Display for FromDaliBusEventTypeError
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Only events containing frames can be converted")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DaliFrame
+{
+    Frame8(u8),
+    Frame16([u8;2]),
+    Frame24([u8;3]), 
+    Frame25([u8;4]), 
+}
+
+impl DaliFrame
+{
+    pub fn bit_length(&self) -> u32
+    {
+	use DaliFrame::*;
+	match self {
+	    Frame8(_) => 8,
+	    Frame16(_) => 16,
+	    Frame24(_) => 24,
+	    Frame25(_) => 25,
+	}	    
+    }
+}
+
+impl TryFrom<&DaliBusEventType> for DaliFrame
+{
+    type Error = FromDaliBusEventTypeError;
+    fn try_from(t: &DaliBusEventType) -> Result<Self, Self::Error>
+    {
+	match t {
+	    DaliBusEventType::Frame8(f) => Ok(Self::Frame8(*f)),
+	    DaliBusEventType::Frame16(f) => Ok(Self::Frame16(*f)),
+	    DaliBusEventType::Frame24(f) => Ok(Self::Frame24(*f)),
+	    DaliBusEventType::Frame25(f) => Ok(Self::Frame25(*f)),
+	    _ => Err(FromDaliBusEventTypeError{})
+	}
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum DaliBusEventType
 {
-    Recv8bitFrame(u8),
-    Recv16bitFrame([u8;2]),
-    Recv24bitFrame([u8;3]),
-    RecvFramingError,
+    Frame8(u8),
+    Frame16([u8;2]),
+    Frame24([u8;3]),
+    Frame25([u8;4]),
+    FramingError,
     BusPowerOff,
     BusPowerOn,
     Overrun, // The previous event wasn't read before the next one arrived
-    DriverError(Box<dyn Error + Sync + Send + 'static>),
-    Closed,
-    NotImplemented
+    Timeout, // Used by simulator for timers
+}
+
+impl From<DaliFrame> for DaliBusEventType
+{
+    fn from(t: DaliFrame) -> Self
+    {
+	match t {
+	    DaliFrame::Frame8(f) => Self::Frame8(f),
+	    DaliFrame::Frame16(f) => Self::Frame16(f),
+	    DaliFrame::Frame24(f) => Self::Frame24(f),
+	    DaliFrame::Frame25(f) => Self::Frame25(f),
+	}
+    }
 }
 
 #[derive(Debug)]
 pub struct DaliBusEvent
 {
+    // Time when the frame was accepted. This is the time of the last
+    // transition + 2.4ms for stop condition.
     pub timestamp: Instant,
-    pub event: DaliBusEventType
+    pub event_type: DaliBusEventType
 }
-   
 
+pub type DaliBusEventResult = Result<DaliBusEvent, 
+				     Box<dyn Error + Sync + Send>>;
 pub trait DaliDriver: Send
 {
     /// Send a raw DALI frame
@@ -97,18 +149,25 @@ pub trait DaliDriver: Send
     /// * `cmd` - Bytes of command
     /// * `flags` - Options for transaction
     
-    fn send_frame(&mut self, cmd: &[u8;4], flags:u16) -> 
+    fn send_frame(&mut self, cmd: DaliFrame, flags: Flags) -> 
         Pin<Box<dyn Future<Output = DaliSendResult> + Send>>;
 
-    fn next_bus_event(&mut self) -> Pin<Box<dyn Future<Output = DaliBusEvent> + Send>>;
+    fn next_bus_event(&mut self) -> 
+	Pin<Box<dyn Future<Output = DaliBusEventResult>>>;
 
-    fn send_frame_16(&mut self, cmd: &[u8;2], flags:u16) ->
+    fn send_frame16(&mut self, cmd: &[u8;2], flags: Flags) ->
 	Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
     {
-	let cmd = [cmd[0], cmd[1], 0, 0];
-	self.send_frame(&cmd, flags | LENGTH_16)
+	let cmd = DaliFrame::Frame16(cmd.clone());
+	self.send_frame(cmd, flags)
     }
-
+    
+    fn send_frame24(&mut self, cmd: &[u8;3], flags: Flags) ->
+	Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
+    {
+	let cmd = DaliFrame::Frame24(cmd.clone());
+	self.send_frame(cmd, flags)
+    }
 
 }
 
@@ -209,7 +268,7 @@ pub fn driver_names() -> Vec<String>
 }
 
 #[cfg(test)]
-fn abc_open_callback(params: HashMap<String, String>)
+fn abc_open_callback(_params: HashMap<String, String>)
 		     -> Result<Box<dyn DaliDriver>, OpenError>
 {
     Err(OpenError::DriverError("abc".into()))

@@ -1,5 +1,6 @@
 use crate::defs::gear::cmd;
-use crate::drivers::driver::{self,DaliDriver,DaliSendResult};
+use crate::drivers::driver::{DaliDriver,DaliSendResult};
+
 use crate::utils::long_address;
 use crate::base::address::Short;
 use crate::base::address::Long;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Sender,error::SendError};
 use std::error::Error;
+use crate::drivers::send_flags::{EXPECT_ANSWER, PRIORITY_1, SEND_TWICE};
 
 async fn send_blocking<T>(tx:&mut Sender<T>, item : T)
                     -> Result<(), SendError<T>>
@@ -87,10 +89,8 @@ async fn find_device(driver: &mut dyn DaliDriver, mut low: u32, mut high: u32,
             Err(e) => return SearchResult::DriverError(Box::new(e))
         }
         // COMPARE
-        let res = driver.send_frame(&[cmd::COMPARE, 0x00, 0x00, 0x00], 
-                                    driver::PRIORITY_1
-				    | driver::LENGTH_16
-				    | driver::EXPECT_ANSWER);
+        let res = driver.send_frame16(&[cmd::COMPARE, 0x00],
+				      PRIORITY_1 | EXPECT_ANSWER);
         match res.await {
             DaliSendResult::Answer(0xff) => {
                 //println!("Found one");
@@ -182,9 +182,9 @@ async fn find_devices_no_initialise(driver: &mut dyn DaliDriver,
                     return Err(Box::new(e))
                 };
 
-                let res = driver.send_frame_16(
+                let res = driver.send_frame16(
 		    &[cmd::QUERY_SHORT_ADDRESS, 0x00],
-                    driver::PRIORITY_1 | driver::EXPECT_ANSWER);
+                    PRIORITY_1 | EXPECT_ANSWER);
                 match res.await {
                     DaliSendResult::Answer(short_addr) => {
                         let short = if short_addr == 0xff {
@@ -206,8 +206,8 @@ async fn find_devices_no_initialise(driver: &mut dyn DaliDriver,
                         }; 
                         //println!("Found device 0x{:06x} with short address {}",
                         //addr, (short_addr>>1) + 1);
-                        let res = driver.send_frame_16(&[cmd::WITHDRAW, 0x00],
-                                                       driver::PRIORITY_1);
+                        let res = driver.send_frame16(&[cmd::WITHDRAW, 0x00],
+                                                       PRIORITY_1);
                         res.await.check_send()?;
 
                         match (high_single, low_multiple) {
@@ -252,8 +252,8 @@ async fn find_devices_no_initialise(driver: &mut dyn DaliDriver,
                     return Err(Box::new(e))
                 };
 
-                let res = driver.send_frame_16(&[cmd::WITHDRAW, 0x00],
-                                              driver::PRIORITY_1);
+                let res = driver.send_frame16(&[cmd::WITHDRAW, 0x00],
+                                              PRIORITY_1);
                 res.await.check_send()?;
                 let msg = Ok(Discovered{
                     long:Some(addr),
@@ -353,8 +353,8 @@ async fn discover_async(d: &mut dyn DaliDriver,
         }
         
     }
-    d.send_frame_16(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
-                         driver::PRIORITY_1|driver::SEND_TWICE)
+    d.send_frame16(&[cmd::INITIALISE, cmd::INITIALISE_ALL], 
+                    PRIORITY_1|SEND_TWICE)
 	.await.check_send()?;
     
     
@@ -365,8 +365,8 @@ async fn discover_async(d: &mut dyn DaliDriver,
         if let Some(l) = found_short[index] {
             long_address::set_search_addr_changed(d,l, &mut current_search_addr)
                 .await?;                }
-        d.send_frame_16(&[cmd::WITHDRAW, 0x00],
-                        driver::PRIORITY_1).await.check_send()?;
+        d.send_frame16(&[cmd::WITHDRAW, 0x00],
+                        PRIORITY_1).await.check_send()?;
     }
     find_devices_no_initialise(d,tx).await?;
     Ok(())
@@ -384,7 +384,7 @@ async fn discover_thread(mut tx: tokio::sync::mpsc::Sender<DiscoverItem>,
             send_blocking(&mut tx, Err(e)).await.unwrap();
         }
     };
-    match d.send_frame_16(&[cmd::TERMINATE, 0x00], driver::PRIORITY_1).await
+    match d.send_frame16(&[cmd::TERMINATE, 0x00], PRIORITY_1).await
     {
         // Ignore any errors
         _ => {}

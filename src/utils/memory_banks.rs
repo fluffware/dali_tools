@@ -1,11 +1,11 @@
 use crate::base::address::{Short};
 use crate::defs::gear::cmd;
-use crate::drivers::driver::{self, DaliDriver, DaliSendResult};
+use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::command_utils::send_device_cmd;
 use std::fmt;
 use std::error::Error;
 use std::convert::TryInto;
-
+use crate::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG};
 pub enum MemoryError {
     LengthMismatch,
     InvalidMemoryArea
@@ -101,12 +101,12 @@ pub async fn read_range(d: &mut dyn DaliDriver, addr: Short,
                         bank: u8, start: u8, length: u8)
                         -> Result<Vec<u8>, Box<dyn Error>>
 {
-    d.send_frame_16(&[cmd::DTR1, bank], 0).await.check_send()?;
-    d.send_frame_16(&[cmd::DTR0, start], 0).await.check_send()?;
+    d.send_frame16(&[cmd::DTR1, bank], NO_FLAG).await.check_send()?;
+    d.send_frame16(&[cmd::DTR0, start], NO_FLAG).await.check_send()?;
     let mut data = Vec::new();
     for _ in 0..length {
          match send_device_cmd(d,&addr, cmd::READ_MEMORY_LOCATION, 
-                                 driver::EXPECT_ANSWER).await {
+                                 EXPECT_ANSWER).await {
              DaliSendResult::Answer(d) => data.push(d),
              DaliSendResult::Timeout => break,
              e => return Err(Box::new(e))
@@ -114,7 +114,7 @@ pub async fn read_range(d: &mut dyn DaliDriver, addr: Short,
     }
 
     let dtr = send_device_cmd(d,&addr, cmd::QUERY_CONTENT_DTR0, 
-                                driver::EXPECT_ANSWER).await.check_answer()?;
+                              EXPECT_ANSWER).await.check_answer()?;
     if length as usize == data.len() {
         if dtr != length + start {
             return Err(Box::new(MemoryError::LengthMismatch));
@@ -137,7 +137,7 @@ pub async fn read_bank_0(d: &mut dyn DaliDriver, addr: Short,
     if bytes.len() != 0x19 {
         return Err(Box::new(MemoryError::InvalidMemoryArea));
     }
-    &bank0[0x02..=0x1a].copy_from_slice(&bytes);
+    bank0[0x02..=0x1a].copy_from_slice(&bytes);
     let mut gtin_bytes = [0u8;8];
     gtin_bytes[2..8].copy_from_slice(&bank0[0x03..=0x08]);
     info.gtin = u64::from_be_bytes(gtin_bytes);

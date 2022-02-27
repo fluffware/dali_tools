@@ -8,10 +8,13 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::oneshot;
 use std::collections::HashMap;
-use super::super::driver::{self,DaliDriver, DaliSendResult, DriverInfo, 
-			   OpenError, 
-			   DaliBusEvent, DaliBusEventType};
-use super::super::utils as driver_utils;
+use crate::drivers;
+use drivers::driver::{DaliDriver, DaliSendResult, DriverInfo, 
+		      OpenError, 
+		      DaliBusEvent, DaliBusEventType,
+		      DaliBusEventResult, DaliFrame};
+use drivers::utils as driver_utils;
+use drivers::send_flags::Flags;
 use driver_utils::{DALIreq};
 use super::dali_msg::DaliMsg;
 use super::dali_msg;
@@ -22,50 +25,27 @@ use std::os::unix::io::AsRawFd;
 struct PruDriver
 {
     req_tx: Option<mpsc::Sender<DALIreq>>,
-    monitor_tx: mpsc::Sender<oneshot::Sender<DaliBusEvent>>,
+    monitor_tx: mpsc::Sender<oneshot::Sender<DaliBusEventResult>>,
     read_thread_join: Option<thread::JoinHandle<()>>	
 }
 
 impl DaliDriver for PruDriver
 {
-    fn send_frame(&mut self, cmd: &[u8;4], flags:u16) -> 
+    fn send_frame(&mut self, cmd: DaliFrame, flags:Flags) -> 
         Pin<Box<dyn Future<Output = DaliSendResult> + Send>>
     {
 	if let Some(req_tx) = &mut self.req_tx {
-	    driver_utils::send_frame(req_tx,cmd, flags)
+	    driver_utils::send_frame(req_tx,&cmd, flags)
 	} else {
 	    Box::pin(std::future::ready(
 		DaliSendResult::DriverError("No command queue".into())))
 	}
     }
     
-    fn next_bus_event(&mut self) -> Pin<Box<dyn Future<Output = DaliBusEvent> + Send>>
+    fn next_bus_event(&mut self) ->
+	Pin<Box<dyn Future<Output = DaliBusEventResult>>>
     {
-	let (tx, rx) = oneshot::channel();
-	
-	match self.monitor_tx.try_send(tx) {
-            Ok(()) => {
-		Box::pin(async {
-                    match rx.await {
-			Ok(r) => r,
-			
-			Err(e) => DaliBusEvent{
-			    timestamp: Instant::now(),
-			    event: DaliBusEventType::DriverError(Box::new(e))
-			}
-                    }
-            })
-            },
-            Err(_) => {
-		Box::pin(std::future::ready(
-		    DaliBusEvent{
-			timestamp: Instant::now(),
-			event: DaliBusEventType::DriverError(
-                            "Failed to queue monitor request".into())
-		    }
-		))
-	    }
-	}
+	driver_utils::next_bus_event(&mut self.monitor_tx)
     }
 }
 
@@ -120,25 +100,21 @@ async fn send_frame<W>(dev_write: &mut W,
 {
     let mut msg;
     // Create a frame of correct length
-    match req.cmd.flags & 0x0700 {
-	driver::LENGTH_8 => {
-	    msg = DaliMsg::frame8(*seq_no, &req.cmd.data);
+    match req.cmd.data {
+	DaliFrame::Frame8(f) => {
+	    msg = DaliMsg::frame8(*seq_no, &[f]);
 	    msg.set_ignore_collisions(true);
 	    msg.set_priority(dali_msg::DALI_FLAGS_PRIORITY_0);
 	},
-	driver::LENGTH_16 => {
-	    msg = DaliMsg::frame16(*seq_no, &req.cmd.data);
+	DaliFrame::Frame16(f) => {
+	    msg = DaliMsg::frame16(*seq_no, &f);
 	},
-	driver::LENGTH_24 => {
-	    msg = DaliMsg::frame24(*seq_no, &req.cmd.data);
+	DaliFrame::Frame24(f) => {
+	    msg = DaliMsg::frame24(*seq_no, &f);
 	},
-	driver::LENGTH_25 => {
-	    msg = DaliMsg::frame25(*seq_no, &req.cmd.data);
+	DaliFrame::Frame25(f) => {
+	    msg = DaliMsg::frame25(*seq_no, &f);
 	},
-	_ => {
-	    return DaliSendResult::DriverError(
-		"Illegal frame length".into())
-	}
     };
     
     if *seq_no == 255 {
@@ -147,16 +123,16 @@ async fn send_frame<W>(dev_write: &mut W,
 	*seq_no += 1;
     }
     
-    let priority = req.cmd.flags & 0x0007;
-    
-    if req.cmd.flags & 0x0700 == driver::LENGTH_8 {
+    let priority = req.cmd.flags.priority();
+
+    if let DaliFrame::Frame8(_) = req.cmd.data {
 	msg.set_priority(dali_msg::DALI_FLAGS_PRIORITY_0);
     } else if !(1..=5).contains(&priority) {
 	msg.set_priority(priority);
     }	
-    msg.set_send_twice(req.cmd.flags & driver::SEND_TWICE != 0);
+    msg.set_send_twice(req.cmd.flags.send_twice());
     
-    msg.set_expect_answer(req.cmd.flags & driver::EXPECT_ANSWER != 0);
+    msg.set_expect_answer(req.cmd.flags.expect_answer());
 
     msg.set_retry(true);
 
@@ -198,8 +174,38 @@ async fn send_frame<W>(dev_write: &mut W,
     }
 }
 
+#[derive(Debug)]
+enum DriverError
+{
+    UnhandledFrameLength,
+    DeviceError,
+    TimingError,
+    DeviceResult(u8),
+    SequenceError{expected: u8, got: u8},
+}
+
+impl std::error::Error for DriverError {}
+
+use DriverError::*;
+impl std::fmt::Display for DriverError
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+	    UnhandledFrameLength => write!(f, "Unhandled frame length"),
+	    DeviceError => write!(f, "Device error"),
+	    TimingError => write!(f, "Internal timing error"),
+	    DeviceResult(res) => write!(f, "Device result: {}", res),
+	    SequenceError{expected, got} => {
+		write!(f, "Expected {} as sequence number, got {}",
+		       expected, got)
+	    }
+	}
+    }
+}
+
 fn handle_block(msg: &DaliMsg,
-		mrtx: &mut Option<oneshot::Sender<DaliBusEvent>>)
+		mrtx: &mut Option<oneshot::Sender<DaliBusEventResult>>)
+		-> Result<(), DriverError>
 {
     let event_type;
     if msg.seq() == 0 {
@@ -207,41 +213,38 @@ fn handle_block(msg: &DaliMsg,
 	    dali_msg::DALI_RECV_FRAME => {
 		let frame = msg.frame_data();
 		match msg.bit_length() {
-		    8 => DaliBusEventType::Recv8bitFrame(frame[0]),
-		    16 => DaliBusEventType::Recv16bitFrame(
+		    8 => DaliBusEventType::Frame8(frame[0]),
+		    16 => DaliBusEventType::Frame16(
 			[frame[0], frame[1]]),
-		    24 => DaliBusEventType::Recv24bitFrame(
+		    24 => DaliBusEventType::Frame24(
 			[frame[0], frame[1], frame[2]]),
-		    _ => DaliBusEventType::DriverError(
-			"Unhandled frame length".into())
+		    _ => return Err(UnhandledFrameLength)
 		}
 	    },
 	    dali_msg::DALI_ERR_FRAMING =>
-		DaliBusEventType::RecvFramingError,
+		DaliBusEventType::FramingError,
 	    dali_msg::DALI_ERR_BUS_LOW =>
 		DaliBusEventType::BusPowerOff,
 	    dali_msg::DALI_INFO_BUS_HIGH =>
 		    DaliBusEventType::BusPowerOn,
 	    
 	    dali_msg::DALI_ERR_DRIVER =>
-		DaliBusEventType::DriverError("Device error".into()),
+		return Err(DeviceError),
 	    dali_msg::DALI_ERR_TIMING =>
-		DaliBusEventType::DriverError("Internal timing error".into()),
-	    _ =>
-		DaliBusEventType::DriverError(
-		    format!("Device result: {}", msg.result()) .into())
+		return Err(TimingError),
+	    _ => return Err(DeviceResult(msg.result()))
 	};
     } else {
-        event_type = DaliBusEventType::DriverError(
-	    format!("Expected 0 as sequence number, got {}", msg.seq()).into())
+	return Err(SequenceError{expected: 0, got: msg.seq()});
     }
     let event = DaliBusEvent {
 	timestamp: Instant::now(),
-	event: event_type
+	event_type
     };
     if let Some(mrtx) = mrtx.take() {
-	mrtx.send(event).unwrap_or(());
+	mrtx.send(Ok(event)).unwrap_or(());
     }
+    Ok(())
 }
 
 fn read_thread(mut device: File, read_tx:  mpsc::Sender<DaliMsg>)
@@ -285,17 +288,23 @@ fn read_thread(mut device: File, read_tx:  mpsc::Sender<DaliMsg>)
 async fn driver_thread(mut dev_write: File, 
 		       mut dev_read: mpsc::Receiver<DaliMsg>, 
 		       mut rx: mpsc::Receiver<DALIreq>,
-                       mut monitor: mpsc::Receiver<oneshot::Sender<DaliBusEvent>>)
+                       mut monitor: mpsc::Receiver<oneshot::Sender<DaliBusEventResult>>)
 {
 
     
     let mut seq_no = 1;
-    let mut mrtx: Option<oneshot::Sender<DaliBusEvent>> = None;
+    let mut mrtx: Option<oneshot::Sender<DaliBusEventResult>> = None;
     loop {
 	tokio::select!{
 	    msg = dev_read.recv() => {
 		match msg {
-		    Some(msg) => handle_block(&msg, &mut mrtx),
+		    Some(msg) => {
+			if let Err(err) = handle_block(&msg, &mut mrtx) {
+			     if let Some(mrtx) = mrtx.take() {
+				 mrtx.send(Err(Box::new(err))).unwrap_or(());
+			     }
+			}
+		    },
 		    None => break
 		}
 	    },
@@ -334,7 +343,7 @@ fn driver_open(_params: HashMap<String, String>)
 	)?;
     let (req_tx, req_rx) = mpsc::channel::<DALIreq>(10);
     let (read_tx, read_rx) = mpsc::channel::<DaliMsg>(10);
-    let (mtx, mrx) = mpsc::channel::<oneshot::Sender<DaliBusEvent>>(10);
+    let (mtx, mrx) = mpsc::channel::<oneshot::Sender<DaliBusEventResult>>(10);
     let read_dev = dev.try_clone().map_err(
 	|e| OpenError::DriverError(e.into())
     )?;

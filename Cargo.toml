@@ -2,7 +2,7 @@
 name = "dali_tools"
 version = "0.1.0"
 authors = ["ksb <ksb@fluffware.se>"]
-edition = "2018"
+edition = "2021"
 
 [features]
 helvar510_driver= ["libusb-async"]

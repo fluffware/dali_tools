@@ -1,21 +1,21 @@
-
 use std::future::Future;
-use std::task::Poll;
-use std::task::Context;
 use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
-pub struct IdleFuture<T,O>
-    where T: Future<Output = O>
+pub struct IdleFuture<T, O>
+where
+    T: Future<Output = O>,
 {
-    future: Option<T>
+    future: Option<T>,
 }
 
-impl<T,O> IdleFuture<T,O>
-    where T: Future<Output = O>
+impl<T, O> IdleFuture<T, O>
+where
+    T: Future<Output = O>,
 {
-    pub fn new() -> IdleFuture<T,O>
-    {
-        IdleFuture{future: None}
+    pub fn new() -> IdleFuture<T, O> {
+        IdleFuture { future: None }
     }
 
     pub fn set(&mut self, future: T) {
@@ -27,13 +27,12 @@ impl<T,O> IdleFuture<T,O>
     }
 }
 
-impl<T,O> Future for IdleFuture<T,O>
-    where T: Future<Output = O> + Unpin
+impl<T, O> Future for IdleFuture<T, O>
+where
+    T: Future<Output = O> + Unpin,
 {
     type Output = O;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
-    {
-        
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         if let Some(ref mut future) = self.get_mut().future {
             T::poll(Pin::new(future), cx)
         } else {

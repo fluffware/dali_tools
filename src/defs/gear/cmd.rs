@@ -1,45 +1,43 @@
-
 // Device commands, opcode byte
-pub const OFF:u8 = 0x00;
+pub const OFF: u8 = 0x00;
 
-pub const UP:u8 = 0x01;
-pub const DOWN:u8 = 0x02;
+pub const UP: u8 = 0x01;
+pub const DOWN: u8 = 0x02;
 
-pub const STEP_UP:u8 = 0x03;
-pub const STEP_DOWN:u8 = 0x04;
+pub const STEP_UP: u8 = 0x03;
+pub const STEP_DOWN: u8 = 0x04;
 
-pub const RECALL_MAX_LEVEL:u8 = 0x05;
-pub const RECALL_MIN_LEVEL:u8 = 0x06;
+pub const RECALL_MAX_LEVEL: u8 = 0x05;
+pub const RECALL_MIN_LEVEL: u8 = 0x06;
 
-pub const STEP_DOWN_AND_OFF:u8 = 0x07;
-pub const ON_AND_STEP_UP:u8 = 0x08;
+pub const STEP_DOWN_AND_OFF: u8 = 0x07;
+pub const ON_AND_STEP_UP: u8 = 0x08;
 
-pub const ENABLE_DAPC:u8 = 0x09;
-pub const GO_TO_LAST_ACTIVE_LEVEL:u8 = 0x0a;
+pub const ENABLE_DAPC: u8 = 0x09;
+pub const GO_TO_LAST_ACTIVE_LEVEL: u8 = 0x0a;
 
-pub const GO_TO_SCENE_0:u8 = 0x10;
-pub const GO_TO_SCENE_1:u8 = 0x11;
-pub const GO_TO_SCENE_2:u8 = 0x12;
-pub const GO_TO_SCENE_3:u8 = 0x13;
-pub const GO_TO_SCENE_4:u8 = 0x14;
-pub const GO_TO_SCENE_5:u8 = 0x15;
-pub const GO_TO_SCENE_6:u8 = 0x16;
-pub const GO_TO_SCENE_7:u8 = 0x17;
-pub const GO_TO_SCENE_8:u8 = 0x18;
-pub const GO_TO_SCENE_9:u8 = 0x19;
-pub const GO_TO_SCENE_10:u8 = 0x1a;
-pub const GO_TO_SCENE_11:u8 = 0x1b;
-pub const GO_TO_SCENE_12:u8 = 0x1c;
-pub const GO_TO_SCENE_13:u8 = 0x1d;
-pub const GO_TO_SCENE_14:u8 = 0x1e;
-pub const GO_TO_SCENE_15:u8 = 0x1f;
+pub const GO_TO_SCENE_0: u8 = 0x10;
+pub const GO_TO_SCENE_1: u8 = 0x11;
+pub const GO_TO_SCENE_2: u8 = 0x12;
+pub const GO_TO_SCENE_3: u8 = 0x13;
+pub const GO_TO_SCENE_4: u8 = 0x14;
+pub const GO_TO_SCENE_5: u8 = 0x15;
+pub const GO_TO_SCENE_6: u8 = 0x16;
+pub const GO_TO_SCENE_7: u8 = 0x17;
+pub const GO_TO_SCENE_8: u8 = 0x18;
+pub const GO_TO_SCENE_9: u8 = 0x19;
+pub const GO_TO_SCENE_10: u8 = 0x1a;
+pub const GO_TO_SCENE_11: u8 = 0x1b;
+pub const GO_TO_SCENE_12: u8 = 0x1c;
+pub const GO_TO_SCENE_13: u8 = 0x1d;
+pub const GO_TO_SCENE_14: u8 = 0x1e;
+pub const GO_TO_SCENE_15: u8 = 0x1f;
 
-pub const RESET:u8 = 0x20;
-pub const STORE_ACTUAL_LEVEL_IN_DTR0:u8 = 0x21;
-pub const SAVE_PERSISTENT_VARIABLES:u8 = 0x22;
-pub const SET_OPERATING_MODE:u8 = 0x23;
-pub const RESET_MEMORY_BANK:u8 = 0x24;
-
+pub const RESET: u8 = 0x20;
+pub const STORE_ACTUAL_LEVEL_IN_DTR0: u8 = 0x21;
+pub const SAVE_PERSISTENT_VARIABLES: u8 = 0x22;
+pub const SET_OPERATING_MODE: u8 = 0x23;
+pub const RESET_MEMORY_BANK: u8 = 0x24;
 
 pub const IDENTIFY_DEVICE: u8 = 0x25;
 pub const SET_MAX_LEVEL: u8 = 0x2a;
@@ -49,7 +47,6 @@ pub const SET_POWER_ON_LEVEL: u8 = 0x2d;
 pub const SET_FADE_TIME: u8 = 0x2e;
 pub const SET_FADE_RATE: u8 = 0x2f;
 pub const SET_EXTENDED_FADE_TIME: u8 = 0x30;
-
 
 pub const SET_SCENE_0: u8 = 0x40;
 pub const SET_SCENE_1: u8 = 0x41;
@@ -67,7 +64,6 @@ pub const SET_SCENE_12: u8 = 0x4c;
 pub const SET_SCENE_13: u8 = 0x4d;
 pub const SET_SCENE_14: u8 = 0x4e;
 pub const SET_SCENE_15: u8 = 0x4f;
-
 
 pub const REMOVE_FROM_SCENE_0: u8 = 0x50;
 pub const REMOVE_FROM_SCENE_1: u8 = 0x51;
@@ -179,7 +175,6 @@ pub const READ_MEMORY_LOCATION: u8 = 0xc5;
 
 pub const APP_EXT_CMDS_FIRST: u8 = 0xe0;
 pub const APP_EXT_CMDS_LAST: u8 = 0xe0;
-
 
 pub const QUERY_EXTENDED_VERSION_NUMBER: u8 = 0xff;
 

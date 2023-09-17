@@ -1,7 +1,4 @@
-
-
-
-const CMD_DESCR_16: [&'static str;256] = [
+const CMD_DESCR_16: [&'static str; 256] = [
     "Off",
     "Up",
     "Down",
@@ -257,11 +254,10 @@ const CMD_DESCR_16: [&'static str;256] = [
     "Application extended command 0xfc",
     "Application extended command 0xfd",
     "Application extended command 0xfe",
-    "Query extended verion number" // 0xff
+    "Query extended verion number", // 0xff
 ];
 
-fn device_cmd_descr_24(cmd: u8) -> &'static str
-{
+fn device_cmd_descr_24(cmd: u8) -> &'static str {
     match cmd {
         0x00 => "Identify device",
         0x01 => "Reset power cycle seen",
@@ -306,12 +302,11 @@ fn device_cmd_descr_24(cmd: u8) -> &'static str
         0x46 => "Query device capabilities",
         0x47 => "Query extended version number",
         0x48 => "Query reset state",
-        _ => "Unknown device command"
+        _ => "Unknown device command",
     }
 }
 
-fn instance_cmd_descr_24(cmd: u8) -> &'static str
-{
+fn instance_cmd_descr_24(cmd: u8) -> &'static str {
     match cmd {
         0x61 => "Set event priority",
         0x62 => "Enable instance",
@@ -338,135 +333,129 @@ fn instance_cmd_descr_24(cmd: u8) -> &'static str
         0x90 => "Query event filter 0 - 7",
         0x91 => "Query event filter 8 - 15",
         0x92 => "Query event filter 16 - 23",
-        _ => "Unknown instance command"
+        _ => "Unknown instance command",
     }
 }
 
-fn decode_addr(addr: u8) -> String
-{
-    if addr & 0xfe == 0xfe { // Broadcast 
+fn decode_addr(addr: u8) -> String {
+    if addr & 0xfe == 0xfe {
+        // Broadcast
         return "Broadcast".to_string();
-    } else if addr & 0xfe == 0xfc { // Broadcast unaddressed
+    } else if addr & 0xfe == 0xfc {
+        // Broadcast unaddressed
         return "Unaddressed".to_string();
-    } else if addr & 0x80 != 0 { // Group 
+    } else if addr & 0x80 != 0 {
+        // Group
         if addr & 0x60 != 0 {
             return "Illegal group address".to_string();
         } else {
-            return format!("Group: {}",  (addr>>1) & 0x0f);
+            return format!("Group: {}", (addr >> 1) & 0x0f);
         }
-    } else { /* Address */
-                return format!("Addr: {}", (addr>>1) & 0x3f);
+    } else {
+        /* Address */
+        return format!("Addr: {}", (addr >> 1) & 0x3f);
     }
 }
 
-fn decode_16bit(pkt: &[u8]) -> String
-{
+fn decode_16bit(pkt: &[u8]) -> String {
     let str;
     assert!(pkt.len() >= 2);
-    if (pkt[0] & 1) != 0 { // Command 
-        if (pkt[0] & 0xe0) == 0xa0 || (pkt[0] & 0xe0) == 0xc0 { // Special command
+    if (pkt[0] & 1) != 0 {
+        // Command
+        if (pkt[0] & 0xe0) == 0xa0 || (pkt[0] & 0xe0) == 0xc0 {
+            // Special command
             str = match pkt[0] {
-	        0xa1 => {
-                    "Terminate".to_string()
-                },
-	        0xa3 => {
-	            format!("Set DTR = {} (0x{:02x})", pkt[1], pkt[1])
-	        },
-	        0xc3 => {
-	        format!("Set DTR1 = {} (0x{:02x})", pkt[1], pkt[1])
-                },
+                0xa1 => "Terminate".to_string(),
+                0xa3 => {
+                    format!("Set DTR = {} (0x{:02x})", pkt[1], pkt[1])
+                }
+                0xc3 => {
+                    format!("Set DTR1 = {} (0x{:02x})", pkt[1], pkt[1])
+                }
                 0xc5 => {
-	            format!("Set DTR2 = {} (0x{:02x})", pkt[1], pkt[1])
+                    format!("Set DTR2 = {} (0x{:02x})", pkt[1], pkt[1])
                 }
                 0xa5 => {
-	            format!("Initialise {} (0x{:02x})", pkt[1], pkt[1])
-                },
+                    format!("Initialise {} (0x{:02x})", pkt[1], pkt[1])
+                }
                 0xa7 => "Randomise".to_string(),
-	        0xa9 => "Compare".to_string(),
+                0xa9 => "Compare".to_string(),
                 0xab => "Withdraw".to_string(),
                 0xb1 => format!("Search address high 0x{:02x}", pkt[1]),
                 0xb3 => format!("Search address middle 0x{:02x}", pkt[1]),
                 0xb5 => format!("Search address low 0x{:02x}", pkt[1]),
-                0xb7 => format!("Program short address {}", (pkt[1]>>1) & 0x3f),
-                0xb9 => format!("Verify short address {}", (pkt[1]>>1) & 0x3f),
+                0xb7 => format!("Program short address {}", (pkt[1] >> 1) & 0x3f),
+                0xb9 => format!("Verify short address {}", (pkt[1] >> 1) & 0x3f),
                 0xbb => "Query short address".to_string(),
                 0xbd => "Physical selection".to_string(),
                 0xc1 => format!("Enable device type {}", pkt[1]),
                 0xc7 => format!("Write memory location: 0x{:02x}", pkt[1]),
-                0xc9 => format!("Write memory location (no reply): 0x{:02x}",
-                                pkt[1]),
-                _ => "Unknown special command".to_string()
-	    }
+                0xc9 => format!("Write memory location (no reply): 0x{:02x}", pkt[1]),
+                _ => "Unknown special command".to_string(),
+            }
         } else {
-	    str = decode_addr(pkt[0]) + ": "+CMD_DESCR_16[usize::from(pkt[1])];
-	}
+            str = decode_addr(pkt[0]) + ": " + CMD_DESCR_16[usize::from(pkt[1])];
+        }
     } else {
-        str =  decode_addr(pkt[0]) + ": " + &format!("Set power = {}", pkt[1]);
+        str = decode_addr(pkt[0]) + ": " + &format!("Set power = {}", pkt[1]);
     }
     return str;
 }
 
-fn decode_cmd_addr_24bit(addr: u8) -> Option<String>
-{
-    if addr & 0xfe == 0xfe { // Broadcast 
+fn decode_cmd_addr_24bit(addr: u8) -> Option<String> {
+    if addr & 0xfe == 0xfe {
+        // Broadcast
         return Some("Broadcast".to_string());
-    } else if addr & 0xfe == 0xfc { // Broadcast unaddressed
+    } else if addr & 0xfe == 0xfc {
+        // Broadcast unaddressed
         return Some("Unaddressed".to_string());
-    } else if addr & 0xc0 == 0x80 { // Group 
-        return Some(format!("Group: {}",  (addr>>1) & 0x0f));
-    } else if (addr & 0x80) == 0x00 { // Address
-        return Some(format!("Addr: {}", (addr>>1) & 0x3f));
+    } else if addr & 0xc0 == 0x80 {
+        // Group
+        return Some(format!("Group: {}", (addr >> 1) & 0x0f));
+    } else if (addr & 0x80) == 0x00 {
+        // Address
+        return Some(format!("Addr: {}", (addr >> 1) & 0x3f));
     } else {
         return None;
     }
 }
 
-fn decode_device_command(cmd: u8) -> String
-{
+fn decode_device_command(cmd: u8) -> String {
     device_cmd_descr_24(cmd).to_string()
 }
 
-fn decode_instance_command(cmd: u8) -> String
-{
+fn decode_instance_command(cmd: u8) -> String {
     instance_cmd_descr_24(cmd).to_string()
 }
 
-fn decode_instance_type(instance_type: u8) -> &'static str
-{
+fn decode_instance_type(instance_type: u8) -> &'static str {
     match instance_type {
         1 => "Push button",
         3 => "Occupancy sensor",
         4 => "Light sensor",
-        _ => "Unknown"
+        _ => "Unknown",
     }
 }
 
-fn source_device_addr(addr: u8) -> String
-{
+fn source_device_addr(addr: u8) -> String {
     format!("Device addr: {}, ", addr)
 }
 
-fn source_device_group(group: u8) -> String
-{
+fn source_device_group(group: u8) -> String {
     format!("Device group: {}, ", group)
 }
 
-fn source_instance(instance: u8) -> String
-{
+fn source_instance(instance: u8) -> String {
     format!("Instance: {}, ", instance)
 }
 
-fn source_instance_group(group: u8) -> String
-{
+fn source_instance_group(group: u8) -> String {
     format!("Instance group: {}, ", group)
 }
 
-fn source_instance_type(instance_type: u8) -> String
-{
-    format!("Instance type: {}", 
-            decode_instance_type(instance_type))
+fn source_instance_type(instance_type: u8) -> String {
+    format!("Instance type: {}", decode_instance_type(instance_type))
 }
-
 
 fn decode_event_source(source: &[u8]) -> String {
     assert!(source.len() >= 2);
@@ -475,55 +464,42 @@ fn decode_event_source(source: &[u8]) -> String {
     }
     let source1 = (source[0] >> 1) & 0x3f;
     let source2 = (source[1] >> 2) & 0x1f;
-    match (source[0] & 0xc1, source[1] &0x80) {
+    match (source[0] & 0xc1, source[1] & 0x80) {
         (0x00, 0x00) | (0x40, 0x00) => {
             source_device_addr(source1) + ", " + &source_instance_type(source2)
-        },
+        }
         (0x00, 0x80) | (0x40, 0x80) => {
             source_device_addr(source1) + ", " + &source_instance(source2)
-        },
-        (0x80, 0x00) => {
-            source_device_group(source1) + ", " + &source_instance_type(source2)
-        },
-        (0x80, 0x80) => {
-            source_device_group(source1) + ", " + &source_instance(source2)
-        },
+        }
+        (0x80, 0x00) => source_device_group(source1) + ", " + &source_instance_type(source2),
+        (0x80, 0x80) => source_device_group(source1) + ", " + &source_instance(source2),
         (0xc0, 0x00) => {
-            source_instance_group(source1 & 0x1f) + ", " +
-                &source_instance_type(source2)
-        },
-        _ => "Reserved".to_string()
+            source_instance_group(source1 & 0x1f) + ", " + &source_instance_type(source2)
+        }
+        _ => "Reserved".to_string(),
     }
 }
 
-fn decode_special_command(pkt: &[u8]) -> String
-{
+fn decode_special_command(pkt: &[u8]) -> String {
     assert!(pkt.len() >= 3);
     match pkt[0] {
         0xc1 => match pkt[1] {
             0x00 if pkt[2] == 0 => "Terminate".to_string(),
             0x01 => {
-                let device = 
-                    if pkt[2] == 0x7f {
-                        "uninitialized".to_string()
-                    } else if pkt[2] == 0xff {
-                        "all".to_string()
-                    } else if (pkt[2] & 0xc0) == 0x00 {
-                        format!("{} (0x{:02x}", pkt[2], pkt[2])
-                    } else {
-                        "none".to_string()
-                    };
+                let device = if pkt[2] == 0x7f {
+                    "uninitialized".to_string()
+                } else if pkt[2] == 0xff {
+                    "all".to_string()
+                } else if (pkt[2] & 0xc0) == 0x00 {
+                    format!("{} (0x{:02x}", pkt[2], pkt[2])
+                } else {
+                    "none".to_string()
+                };
                 "Initialise ".to_string() + &device
-            },
-            0x02 if pkt[2] == 0x00 => {
-                "Randomise".to_string()
-            },
-            0x03 if pkt[2] == 0x00 => {
-                "Compare".to_string()
-            },
-            0x04 if pkt[2] == 0x00 => {
-                "Withdraw".to_string()
-            },
+            }
+            0x02 if pkt[2] == 0x00 => "Randomise".to_string(),
+            0x03 if pkt[2] == 0x00 => "Compare".to_string(),
+            0x04 if pkt[2] == 0x00 => "Withdraw".to_string(),
             0x05 => format!("Search address high 0x{:02x}", pkt[2]),
             0x06 => format!("Search address middle 0x{:02x}", pkt[2]),
             0x07 => format!("Search address low 0x{:02x}", pkt[2]),
@@ -533,78 +509,84 @@ fn decode_special_command(pkt: &[u8]) -> String
             0x20 => format!("Write memory location. Data: {}", pkt[2]),
             0x21 => {
                 format!("Write memory location - no reply, data {}", pkt[2])
-            },
+            }
             0x30 => {
-	        format!("Set DTR = {} (0x{:02x})", pkt[2], pkt[2])
-	    },
-	    0x31 => {
-	        format!("Set DTR1 = {} (0x{:02x})", pkt[2], pkt[2])
-            },
+                format!("Set DTR = {} (0x{:02x})", pkt[2], pkt[2])
+            }
+            0x31 => {
+                format!("Set DTR1 = {} (0x{:02x})", pkt[2], pkt[2])
+            }
             0x32 => {
-	        format!("Set DTR2 = {} (0x{:02x})", pkt[2], pkt[2])
-            },
+                format!("Set DTR2 = {} (0x{:02x})", pkt[2], pkt[2])
+            }
             0x33 => {
-                format!("Send testframe. {}, priority {}{}{}",
-                        if (pkt[2] & 0x20) == 0 {
-                            "24 bits"
-                        } else {
-                            "16 bits"
-                        },
-                        pkt[2] & 0x07,
-                        if (pkt[2] & 0x40) == 0x40 {
-                            " ,transaction"
-                        } else {
-                            ""
-                        },
-                        if (pkt[2] & 0x18) > 0 {
-                            format!(" ,repeat {} times",(pkt[2] & 0x18) >> 3)
-                        } else {
-                            "".to_string()
-                        }
+                format!(
+                    "Send testframe. {}, priority {}{}{}",
+                    if (pkt[2] & 0x20) == 0 {
+                        "24 bits"
+                    } else {
+                        "16 bits"
+                    },
+                    pkt[2] & 0x07,
+                    if (pkt[2] & 0x40) == 0x40 {
+                        " ,transaction"
+                    } else {
+                        ""
+                    },
+                    if (pkt[2] & 0x18) > 0 {
+                        format!(" ,repeat {} times", (pkt[2] & 0x18) >> 3)
+                    } else {
+                        "".to_string()
+                    }
                 )
-            },
-            _ => "Unknown special command".to_string()
+            }
+            _ => "Unknown special command".to_string(),
         },
-        0xc5 => format!("Direct write memory, offset {}, data {}",
-                        pkt[1], pkt[2]),
-        0xc7 => format!("Set DTR1 = {} (0x{:02x}),DTR0 = {} (0x{:02x})",
-                        pkt[1], pkt[1], pkt[2], pkt[2]),
-        0xc9 => format!("Set DTR2 = {} (0x{:02x}),DTR1 = {} (0x{:02x})",
-                        pkt[1], pkt[1], pkt[2], pkt[2]),
+        0xc5 => format!("Direct write memory, offset {}, data {}", pkt[1], pkt[2]),
+        0xc7 => format!(
+            "Set DTR1 = {} (0x{:02x}),DTR0 = {} (0x{:02x})",
+            pkt[1], pkt[1], pkt[2], pkt[2]
+        ),
+        0xc9 => format!(
+            "Set DTR2 = {} (0x{:02x}),DTR1 = {} (0x{:02x})",
+            pkt[1], pkt[1], pkt[2], pkt[2]
+        ),
 
-        _ => "Unknown command".to_string()
+        _ => "Unknown command".to_string(),
     }
 }
 
-fn decode_24bit(pkt: &[u8]) -> String
-{
+fn decode_24bit(pkt: &[u8]) -> String {
     let str;
-    if (pkt[0] & 1) == 1 { // Command frame
+    if (pkt[0] & 1) == 1 {
+        // Command frame
         let addr = decode_cmd_addr_24bit(pkt[0]);
         if let Some(addr_str) = addr {
-            if pkt[1] == 0xfe { // Device command
-                str = addr_str+": "+&decode_device_command(pkt[2]);
-            } else {  // Instance command
-                str = addr_str+": "+&decode_instance_command(pkt[2]);
+            if pkt[1] == 0xfe {
+                // Device command
+                str = addr_str + ": " + &decode_device_command(pkt[2]);
+            } else {
+                // Instance command
+                str = addr_str + ": " + &decode_instance_command(pkt[2]);
             }
         } else {
             str = decode_special_command(&pkt);
         }
     } else {
         let value = ((u16::from(pkt[1]) & 0x03) << 8) | u16::from(pkt[2]);
-        str = "(".to_string() 
-            + &decode_event_source(&pkt[0..2]) + "): " 
+        str = "(".to_string()
+            + &decode_event_source(&pkt[0..2])
+            + "): "
             + &format!("{} (0x{:03x})", value, value);
     }
     return str;
 }
-        
-pub fn decode_packet(pkt: &[u8]) -> String
-{
+
+pub fn decode_packet(pkt: &[u8]) -> String {
     let len = pkt.len();
     return match len {
         3 => decode_24bit(pkt),
         2 => decode_16bit(pkt),
-        _ => "Invalid packet length".to_string()
-    }
+        _ => "Invalid packet length".to_string(),
+    };
 }

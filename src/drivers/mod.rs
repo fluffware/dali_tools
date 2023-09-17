@@ -1,11 +1,13 @@
 pub mod driver;
 pub mod driver_init;
-pub use driver_init::init as init;
-pub use driver::open as open;
-pub use driver::driver_names as driver_names;
-pub mod utils;
+pub use driver::driver_names;
+pub use driver::open;
+pub use driver_init::init;
+
 pub mod command_utils;
+pub mod driver_utils;
 pub mod send_flags;
+pub mod utils;
 //pub mod monitor;
 #[cfg(feature = "helvar510_driver")]
 pub mod helvar {

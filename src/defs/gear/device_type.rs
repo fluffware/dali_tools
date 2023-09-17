@@ -1,4 +1,3 @@
-
 pub const FLORESCENT: u8 = 0;
 pub const EMERGENCY: u8 = 1;
 pub const DISCHARGE: u8 = 2;
@@ -9,4 +8,3 @@ pub const LED: u8 = 6;
 pub const SWITCHING: u8 = 7;
 pub const COLOUR: u8 = 8;
 pub const UNIMPLEMENTED: u8 = 254;
-

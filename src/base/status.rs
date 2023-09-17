@@ -1,25 +1,20 @@
-use std::fmt;
 use crate::defs::gear::status as flag;
+use std::fmt;
 
 pub struct GearStatus(u8);
 
-impl GearStatus
-{
-    pub fn new(status: u8) -> GearStatus
-    {
-        GearStatus{0: status}
+impl GearStatus {
+    pub fn new(status: u8) -> GearStatus {
+        GearStatus { 0: status }
     }
 
-    pub fn value(&self) -> u8
-    {
+    pub fn value(&self) -> u8 {
         self.0
     }
 }
 
-impl fmt::Display for GearStatus
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result 
-    {
+impl fmt::Display for GearStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut strs = Vec::<&'static str>::new();
         if self.0 & flag::GEAR_FAILURE != 0 {
             strs.push("gear failure");

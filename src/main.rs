@@ -1,7 +1,7 @@
 use dali_tools as dali;
 //use dali::drivers::driver::{DALIcommandError};
 use dali::utils::discover;
-use std::sync::{Arc};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 

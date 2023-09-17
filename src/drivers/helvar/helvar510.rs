@@ -1,6 +1,7 @@
 extern crate libusb_async;
 use super::idle_future::IdleFuture;
 use crate::drivers;
+use crate::utils::dyn_future::DynFuture;
 use core::future::Future;
 use drivers::driver::{
     DaliBusEvent, DaliBusEventResult, DaliBusEventType, DaliDriver, DaliFrame, DaliSendResult,
@@ -25,7 +26,7 @@ pub struct Helvar510driver {
     join: Option<JoinHandle<DriverError>>,
     // Needs to be an option so that it can be dropped to signal the receiver
     send_cmd: Option<mpsc::Sender<DALIreq>>,
-    send_monitor: Arc<Mutex<Option<mpsc::Sender<DaliBusEvent>>>>,
+    _send_monitor: Arc<Mutex<Option<mpsc::Sender<DaliBusEvent>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ enum DriverError {
     NoInterfaceFound,
     CommandError,
     UsbError,
-    ReplyingFailed,
+    //ReplyingFailed,
 }
 
 impl Error for DriverError {}
@@ -53,7 +54,7 @@ impl fmt::Display for DriverError {
             DriverError::NoInterfaceFound => write!(f, "No interface found"),
             DriverError::CommandError => write!(f, "Copmmand error"),
             DriverError::UsbError => write!(f, "USB error"),
-            DriverError::ReplyingFailed => write!(f, "Replying failed"),
+           // DriverError::ReplyingFailed => write!(f, "Replying failed"),
         }
     }
 }
@@ -143,7 +144,7 @@ async fn driver_engine(
                         match buf[1] {
                             0x6d => Some(DaliSendResult::Answer(buf[2])),
                             0x6c => Some(DaliSendResult::Framing),
-                            0x64 => Some(DaliSendResult::OK),
+                            0x64 => Some(DaliSendResult::Ok),
                             0x6b => Some(DaliSendResult::Timeout),
                             _ => None
                         };
@@ -270,7 +271,7 @@ impl Helvar510driver {
         let driver = Helvar510driver {
             send_cmd: Some(tx),
             join: Some(join),
-            send_monitor: monitor,
+            _send_monitor: monitor,
         };
         Ok(driver)
     }
@@ -319,8 +320,18 @@ impl DaliDriver for Helvar510driver {
         }
     }
 
-    fn next_bus_event(&mut self) -> Pin<Box<dyn Future<Output = DaliBusEventResult>>> {
+    fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
         Box::pin(std::future::ready(Err("Not implemented".into())))
+    }
+
+    fn current_timestamp(&self) -> std::time::Instant
+    {
+	Instant::now().into_std()
+    }
+
+    fn wait_until(&self, end: std::time::Instant) -> DynFuture<()>
+    {
+	Box::pin(tokio::time::sleep_until(Instant::from(end)))
     }
 }
 /*

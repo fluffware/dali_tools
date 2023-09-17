@@ -1,6 +1,6 @@
-use dali::base::address::{Address::Broadcast, Group, Short};
+use dali::base::address::{Address::Broadcast, Short};
 use dali::defs::gear::cmd;
-use dali::drivers::command_utils::{send_device_cmd, send_device_level, send_set_dtr0};
+use dali::drivers::command_utils::{send_device_cmd, send_set_dtr0};
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, PRIORITY_5, SEND_TWICE};
@@ -69,7 +69,7 @@ const SEQ_MAP: [u8; 1024] = [
 ];
 
 
-const HALF_BIT_TIME: std::time::Duration = std::time::Duration::from_millis(250);
+//const HALF_BIT_TIME: std::time::Duration = std::time::Duration::from_millis(250);
 const BIT_TIME: std::time::Duration = std::time::Duration::from_millis(500);
 
 fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration) {
@@ -81,45 +81,18 @@ fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration) {
     std::thread::sleep(*last - now);
 }
 
-async fn identify(driver: &mut dyn DaliDriver, space: u8, mark: u8) -> Result<(), Box<dyn Error>> {
-    send_set_dtr0(driver, 0, PRIORITY_5).await.check_send()?;
-    send_device_cmd(
-        driver,
-        &Broadcast,
-        cmd::SET_FADE_TIME,
-        SEND_TWICE | PRIORITY_1,
-    )
-    .await
-    .check_send()?;
-    send_device_cmd(
-        driver,
-        &Broadcast,
-        cmd::SET_EXTENDED_FADE_TIME,
-        SEND_TWICE | PRIORITY_1,
-    )
-    .await
-    .check_send()?;
-    let mut last = std::time::Instant::now();
-    send_device_level(driver, &Broadcast, mark, NO_FLAG)
-        .await
-        .check_send()?;
-    sleep_delta(&mut last, BIT_TIME);
-    send_device_level(driver, &Broadcast, space, NO_FLAG)
-        .await
-        .check_send()?;
-    let mut current = space;
-    let mut next = mark;
-    for b in 0..6 {
-        println!("Current:: {} Next: {}", current, next);
-        sleep_delta(&mut last, HALF_BIT_TIME);
-        send_device_level(driver, &Group::new(8 + b), next, NO_FLAG)
-            .await
-            .check_send()?;
-        sleep_delta(&mut last, HALF_BIT_TIME);
-        send_device_level(driver, &Broadcast, next, NO_FLAG)
-            .await
-            .check_send()?;
-        std::mem::swap(&mut current, &mut next);
+async fn identify(driver: &mut dyn DaliDriver) -> Result<(), Box<dyn Error>> {
+    let mut next = tokio::time::Instant::now();
+    for s in 0..10 {
+        send_device_cmd(
+            driver,
+            &Broadcast,
+            cmd::GO_TO_SCENE_6+s,
+            PRIORITY_1,
+        )
+            .await.check_send()?;
+        next += BIT_TIME;
+        tokio::time::sleep_until(next).await;
     }
 
     Ok(())
@@ -233,7 +206,7 @@ async fn main() {
     }
 
     loop {
-        match identify(&mut *driver, space, mark).await {
+        match identify(&mut *driver).await {
             Ok(_) => {}
             Err(e) => {
                 println!("{}", e);

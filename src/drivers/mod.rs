@@ -14,6 +14,9 @@ pub mod helvar {
     pub mod helvar510;
     mod idle_future;
 }
+#[cfg(feature = "dgw521_driver")]
+pub mod dgw521;
+
 #[cfg(feature = "simulator")]
 pub mod simulator;
 

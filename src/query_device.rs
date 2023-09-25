@@ -3,36 +3,49 @@ use dali::drivers::driver::OpenError;
 use dali::utils::device_info;
 use dali::utils::memory_banks;
 use dali_tools as dali;
-#[macro_use]
 extern crate clap;
+use clap::{Arg, Command};
 
 #[tokio::main]
 async fn main() {
     if let Err(e) = dali::drivers::init() {
         println!("Failed to initialize DALI drivers: {}", e);
     }
-    let matches = clap_app!(swap_addr =>
-                (about: "Query one or more DALI gears for various information.")
-        (@arg DEVICE: -d --device +takes_value "Select DALI-device")
-                (@arg ADDR: +required "Address")
-                (@arg memory_banks: -m --("memory-banks")
-                 "Read information from memory banks")
-    )
-    .get_matches();
+    let matches = Command::new("query_device")
+        .about("Query one or more DALI gears for various information.")
+        .arg(
+            Arg::new("DEVICE")
+                .short('d')
+                .long("device")
+                .default_value("default")
+                .help("Select DALI-device"),
+        )
+        .arg(Arg::new("ADDR").long("required").help("Address"))
+        .arg(
+            Arg::new("memory_banks")
+                .short('m')
+                .long("memory-banks")
+                .default_value("false")
+                .default_missing_value("true")
+                .help("Read information from memory banks"),
+        )
+        .get_matches();
 
-    let addr = match u8::from_str_radix(matches.value_of("ADDR").unwrap(), 10) {
-        Ok(x) if x >= 1 && x <= 64 => Short::new(x),
-        Ok(_) => {
+    let addr: Short = match matches.get_one("ADDR") {
+        Some(&x) if x >= 1 && x <= 64 => Short::new(x),
+        Some(_) => {
             println!("Address out of range");
             return;
         }
-        Err(e) => {
-            println!("Address invalid: {}", e);
+        None => {
+            println!("Address invalid");
             return;
         }
     };
-    let device_name = matches.value_of("DEVICE").unwrap_or("default");
-    let read_memory = matches.is_present("memory_banks");
+    let device_name = matches
+        .get_one::<String>("DEVICE")
+        .unwrap();
+    let read_memory = *matches.get_one::<bool>("memory_banks").unwrap();
     let mut driver = match dali::drivers::open(device_name) {
         Ok(d) => d,
         Err(e) => {

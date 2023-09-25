@@ -3,22 +3,27 @@ use dali::utils::decode;
 use dali_tools as dali;
 use std::time::Instant;
 
-#[macro_use]
 extern crate clap;
+use clap::{Command, Arg};
 
 #[tokio::main]
 async fn main() {
     if let Err(e) = dali::drivers::init() {
         println!("Failed to initialize DALI drivers: {}", e);
     }
-    let matches = clap_app!(swap_addr =>
-              (about: "Print DALI bus traffic.")
-      (@arg DEVICE: -d --device +takes_value "Select DALI-device")
-    )
-    .get_matches();
+    let matches = Command::new("swap_addr")
+        .about("Print DALI bus traffic.")
+        .arg(
+            Arg::new("DEVICE")
+                .short('d')
+                .long("device")
+                .default_value("default")
+                .help("Select DALI-device"),
+        )
+        .get_matches();
 
     let mut last_ts = Instant::now();
-    let device_name = matches.value_of("DEVICE").unwrap_or("default");
+    let device_name = matches.get_one::<String>("DEVICE").unwrap();
     let mut driver = dali::drivers::open(device_name).unwrap();
     loop {
         if let Ok(DaliBusEvent {

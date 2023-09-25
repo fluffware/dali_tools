@@ -6,8 +6,8 @@ use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, PRIORITY_5, SEND_TWICE};
 use dali_tools as dali;
 use std::error::Error;
-#[macro_use]
 extern crate clap;
+use clap::{value_parser, Arg, Command};
 
 const BIT_SEQ: [u16; 64] = [
     0x210, 0x211, 0x212, 0x213, 0x214, 0x215, 0x216, 0x217, 0x218, 0x219, 0x21a, 0x21b, 0x21c,
@@ -68,10 +68,10 @@ const SEQ_MAP: [u8; 1024] = [
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
 ];
 
-
 //const HALF_BIT_TIME: std::time::Duration = std::time::Duration::from_millis(250);
 const BIT_TIME: std::time::Duration = std::time::Duration::from_millis(500);
 
+/*
 fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration) {
     *last += dur;
     let now = std::time::Instant::now();
@@ -80,17 +80,13 @@ fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration) {
     }
     std::thread::sleep(*last - now);
 }
-
+*/
 async fn identify(driver: &mut dyn DaliDriver) -> Result<(), Box<dyn Error>> {
     let mut next = tokio::time::Instant::now();
     for s in 0..10 {
-        send_device_cmd(
-            driver,
-            &Broadcast,
-            cmd::GO_TO_SCENE_6+s,
-            PRIORITY_1,
-        )
-            .await.check_send()?;
+        send_device_cmd(driver, &Broadcast, cmd::GO_TO_SCENE_6 + s, PRIORITY_1)
+            .await
+            .check_send()?;
         next += BIT_TIME;
         tokio::time::sleep_until(next).await;
     }
@@ -98,7 +94,11 @@ async fn identify(driver: &mut dyn DaliDriver) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn identify_setup(driver: &mut dyn DaliDriver, space: u8, mark: u8) -> Result<(), Box<dyn Error>> {
+async fn identify_setup(
+    driver: &mut dyn DaliDriver,
+    space: u8,
+    mark: u8,
+) -> Result<(), Box<dyn Error>> {
     send_device_cmd(driver, &Broadcast, cmd::RECALL_MIN_LEVEL, NO_FLAG)
         .await
         .check_send()?;
@@ -117,23 +117,23 @@ async fn identify_setup(driver: &mut dyn DaliDriver, space: u8, mark: u8) -> Res
             DaliSendResult::Timeout => continue,
             e => return Err(Box::new(e)),
         }
-	send_set_dtr0(driver, space, PRIORITY_5);
+        send_set_dtr0(driver, space, PRIORITY_5);
         for b in 0..10 {
-            let cmd = cmd::SET_SCENE_6 +b;
-	    if (BIT_SEQ[i as usize] & (1<< b)) == 0 {
-		send_device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
+            let cmd = cmd::SET_SCENE_6 + b;
+            if (BIT_SEQ[i as usize] & (1 << b)) == 0 {
+                send_device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
                     .await
                     .check_send()?;
-	    }
+            }
         }
-	send_set_dtr0(driver, mark, PRIORITY_5);
+        send_set_dtr0(driver, mark, PRIORITY_5);
         for b in 0..10 {
-            let cmd = cmd::SET_SCENE_6 +b;
-	    if (BIT_SEQ[i as usize] & (1<< b)) != 0 {
-		send_device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
+            let cmd = cmd::SET_SCENE_6 + b;
+            if (BIT_SEQ[i as usize] & (1 << b)) != 0 {
+                send_device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
                     .await
                     .check_send()?;
-	    }
+            }
         }
     }
     Ok(())
@@ -144,44 +144,87 @@ async fn main() {
     if let Err(e) = dali::drivers::init() {
         println!("Failed to initialize DALI drivers: {}", e);
     }
-    let matches = clap_app!(identify =>
-                (about: "Identify DALI gear")
-        (@arg DEVICE: -d --device +takes_value "Select DALI-device")
-                (@arg setup: -s --setup "Prepare groups for identification")
-                (@arg repeat: -r --repeat "Repeat identification sequence")
-                (@arg SPACE: --space +takes_value "Idle level")
-                (@arg MARK: --mark +takes_value "Mark level")
-    )
-    .get_matches();
+    let matches = Command::new("identify")
+        .about("Identify DALI gear")
+        .arg(
+            Arg::new("DEVICE")
+                .short('d')
+                .long("device")
+                .default_value("default")
+                .help("Select DALI-device"),
+        )
+        .arg(
+            Arg::new("setup")
+                .short('s')
+                .long("setup")
+                .default_value("false")
+                .default_missing_value("true")
+                .value_parser(value_parser!(bool))
+                .help("Prepare groups for identification"),
+        )
+        .arg(
+            Arg::new("repeat")
+                .short('r')
+                .long("repeat")
+                .default_value("false")
+                .default_missing_value("true")
+                .value_parser(value_parser!(bool))
+                .help("Repeat identification sequence"),
+        )
+        .arg(
+            Arg::new("SPACE")
+                .long("space")
+                .default_value("150")
+                .value_parser(value_parser!(u8))
+                .help("Idle level"),
+        )
+        .arg(
+            Arg::new("MARK")
+                .long("mark")
+                .default_value("200")
+                .value_parser(value_parser!(u8))
+                .help("Mark level"),
+        )
+        .get_matches();
 
-    let setup = matches.is_present("setup");
-    let repeat = matches.is_present("repeat");
+    let setup = *matches.get_one::<bool>("setup").unwrap_or(&false);
+    let repeat = *matches.get_one::<bool>("repeat").unwrap_or(&false);
 
-    let space = match u8::from_str_radix(matches.value_of("SPACE").unwrap_or("150"), 10) {
-        Ok(x) if x <= 254 => x,
-        Ok(_) => {
+    let space = match matches.try_get_one::<u8>("SPACE") {
+        Ok(Some(&x)) if x <= 254 => x,
+        Ok(Some(_)) => {
             println!("Space level out of range");
             return;
         }
+        Ok(None) => {
+            println!("Space level missing");
+            return;
+        }
+
         Err(e) => {
             println!("Space level invalid: {}", e);
             return;
         }
     };
 
-    let mark = match u8::from_str_radix(matches.value_of("MARK").unwrap_or("200"), 10) {
-        Ok(x) if x <= 254 => x,
-        Ok(_) => {
+    let mark = match matches.try_get_one::<u8>("MARK") {
+        Ok(Some(&x)) if x <= 254 => x,
+        Ok(Some(_)) => {
             println!("Mark level out of range");
             return;
         }
+        Ok(None) => {
+            println!("Mark level missing");
+            return;
+        }
+
         Err(e) => {
             println!("Mark level invalid: {}", e);
             return;
         }
     };
     println!("Space: {} Mark: {}", space, mark);
-    let device_name = matches.value_of("DEVICE").unwrap_or_else(|| "default");
+    let device_name = matches.get_one::<String>("DEVICE").unwrap();
     let mut driver = match dali::drivers::open(device_name) {
         Ok(d) => d,
         Err(e) => {
@@ -223,15 +266,15 @@ async fn main() {
 fn build_lookup() {
     let mut map = [0xffu8; 1024];
     for (i, b) in BIT_SEQ.iter().enumerate() {
-	let mut b = *b as usize;
-	for _ in 0..10 {
-	    assert!(map[b] == 0xff || map[b] == i as u8);
-	    map[b] = i as u8;
-	    b = (b >> 1) | ((b & 1) << 9);
-	}
+        let mut b = *b as usize;
+        for _ in 0..10 {
+            assert!(map[b] == 0xff || map[b] == i as u8);
+            map[b] = i as u8;
+            b = (b >> 1) | ((b & 1) << 9);
+        }
     }
     assert_eq!(map, SEQ_MAP);
     for a in map {
-	println!("{},", a);
+        println!("{},", a);
     }
 }

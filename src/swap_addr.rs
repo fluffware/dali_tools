@@ -9,7 +9,7 @@ use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, SEND_TWICE};
 use dali_tools as dali;
 
 extern crate clap;
-use clap::{Arg, Command};
+use clap::{value_parser, Arg, Command};
 
 async fn set_search_addr(driver: &mut dyn DaliDriver, addr: Long) -> Result<u8, DaliSendResult> {
     let res = driver.send_frame16(&[cmd::SEARCHADDRH, (addr >> 16 & 0xff) as u8], PRIORITY_1);
@@ -119,8 +119,8 @@ async fn main() {
              .long("device")
              .default_value("default")
              .help("Select DALI-device"))
-        .arg(Arg::new("ADDR1").required(true).help("First address"))
-        .arg(Arg::new("ADDR2").required(true).help("Second address"))
+        .arg(Arg::new("ADDR1").required(true).value_parser(value_parser!(u8)).help("First address"))
+        .arg(Arg::new("ADDR2").required(true).value_parser(value_parser!(u8)).help("Second address"))
         .get_matches();
 
     let addr1 = match matches.try_get_one::<u8>("ADDR1") {

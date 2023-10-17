@@ -1,4 +1,4 @@
-pub trait BusAddress {
+pub trait BusAddress: Sync + Send {
     fn bus_address(&self) -> u8;
 }
 

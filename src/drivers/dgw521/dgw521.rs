@@ -12,18 +12,70 @@ use std::future::Future;
 use std::pin::Pin;
 //use std::sync::Arc;
 //use std::sync::Mutex;
-use std::io::{Read, Write};
+use futures::executor::block_on;
+use log::warn;
+use std::collections::VecDeque;
 use std::str::FromStr;
-use tokio::sync::mpsc;
+use std::time::Duration;
+use tokio::sync::mpsc::{self, error::TryRecvError};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio::time::Instant;
-use tokio_modbus::client::{rtu, Context};
+use tokio_modbus::client::rtu;
+use tokio_modbus::prelude::*;
 use tokio_modbus::slave::Slave;
 use tokio_serial::{Parity, SerialStream};
 
+#[allow(dead_code)]
+mod mb {
+    pub const PROTOCOL: u16 = 256;
+    pub const PROTOCOL_MODBUS: bool = false;
+    pub const PROTOCOL_DCON: bool = true;
+    pub const FIND: u16 = 258;
+    pub const FIND_START: bool = true;
+    pub const FIND_BUSY: bool = true;
+    pub const FIND_DONE: bool = false;
+
+    pub const WATCHDOG: u16 = 269;
+    pub const WATCHDOG_ENABLE: bool = true;
+    pub const WATCHDOG_DISABLE: bool = false;
+
+    pub const RESET_STATUS: u16 = 272;
+
+    pub const CMD_STATUS_1: u16 = 0;
+    pub const CMD_STATUS_2: u16 = 1;
+    pub const CMD_STATUS_3: u16 = 2;
+    pub const CMD_STATUS_4: u16 = 3;
+    pub const CMD_STATUS_5: u16 = 4;
+    pub const CMD_STATUS_6: u16 = 5;
+    pub const CMD_STATUS_7: u16 = 6;
+    pub const CMD_STATUS_8: u16 = 7;
+
+    pub const CMD_STATUS_IDLE: u16 = 0;
+    pub const CMD_STATUS_PENDING: u16 = 1;
+    pub const CMD_STATUS_EXECUTING: u16 = 2;
+    pub const CMD_STATUS_NO_ANSWER: u16 = 3;
+    pub const CMD_STATUS_TIMEOUT: u16 = 4;
+    pub const CMD_STATUS_ANSWER: u16 = 5;
+    pub const CMD_STATUS_INVALID_DATA: u16 = 6;
+    pub const CMD_STATUS_EARLY: u16 = 7;
+
+    pub const DALI_CMD_1: u16 = 32;
+    pub const DALI_CMD_2: u16 = 33;
+    pub const DALI_CMD_3: u16 = 34;
+    pub const DALI_CMD_4: u16 = 35;
+    pub const DALI_CMD_5: u16 = 36;
+    pub const DALI_CMD_6: u16 = 37;
+    pub const DALI_CMD_7: u16 = 38;
+    pub const DALI_CMD_8: u16 = 39;
+
+    pub const CMD_STATUS_MASK: u16 = 256;
+}
+
 #[derive(Debug)]
 enum DriverError {
+    #[allow(dead_code)]
     OK,
     CommandError,
     SerialError(tokio_serial::Error),
@@ -43,6 +95,16 @@ impl From<std::io::Error> for DriverError {
         DriverError::IoError(err)
     }
 }
+
+fn send_driver_error<E>(req: DALIreq, error: E)
+where
+    E: Error + Send + Sync + 'static,
+{
+    req.reply
+        .send(DaliSendResult::DriverError(error.into()))
+        .unwrap();
+}
+
 impl fmt::Display for DriverError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -54,20 +116,118 @@ impl fmt::Display for DriverError {
     }
 }
 
+const MB_TIMEOUT: Duration = Duration::from_millis(1000);
 async fn driver_thread(
     serial: SerialStream,
     mut recv: mpsc::Receiver<DALIreq>,
 ) -> Result<(), DriverError> {
-    let mut ctxt = rtu::connect_slave(serial, Slave::from(1)).await?;
-    loop {
-	match recv.recv().await {
-	    Some(req) => {
-		println!("{:?}", req);
-		req.reply.send(DaliSendResult::Ok).unwrap();
-	    }
-	    None => break
-	}
+    let mut ctxt = rtu::attach_slave(serial, Slave::from(1));
+    let mut queue = VecDeque::<DALIreq>::new();
+    let mut oldest_slot = 0;
+    let mut next_slot = 0;
+    'outer: loop {
+        let mask = match timeout(
+            MB_TIMEOUT,
+            ctxt.read_input_registers(mb::CMD_STATUS_MASK, 1),
+        )
+        .await
+        {
+            Ok(Ok(regs)) => regs[0],
+            Ok(Err(e)) => {
+                if let Some(req) = queue.pop_front() {
+                    oldest_slot = (oldest_slot + 1) & 7;
+                    send_driver_error(req, e);
+                }
+                continue 'outer;
+            }
+            Err(e) => {
+                if let Some(req) = queue.pop_front() {
+                    oldest_slot = (oldest_slot + 1) & 7;
+                    send_driver_error(req, e);
+                }
+                warn!("Modbus timeout");
+                continue 'outer;
+            }
+        };
+        //println!("{:08b} {} - {}", mask, oldest_slot, next_slot);
+        while oldest_slot != next_slot && ((1 << oldest_slot) & mask) != 0 {
+            let req = queue.pop_front().unwrap();
+            let slot = oldest_slot;
+            oldest_slot = (oldest_slot + 1) & 7;
+            let res = match timeout(
+                MB_TIMEOUT,
+                ctxt.read_input_registers(mb::CMD_STATUS_1 + slot, 1),
+            )
+            .await
+            {
+                Ok(Ok(regs)) => regs[0],
+                Ok(Err(e)) => {
+                    send_driver_error(req, e);
+                    continue 'outer;
+                }
+                Err(e) => {
+                    send_driver_error(req, e);
+                    continue 'outer;
+                }
+            };
+            //println!("Status {:04x} @{}", res, slot);
+            req.reply
+                .send(match res & 0xff {
+                    mb::CMD_STATUS_EXECUTING | mb::CMD_STATUS_PENDING => {
+                        DaliSendResult::DriverError("Command not finished".into())
+                    }
+                    mb::CMD_STATUS_NO_ANSWER => {
+                        if req.cmd.flags.expect_answer() {
+                            DaliSendResult::Answer((res >> 8) as u8)
+                        } else {
+                            DaliSendResult::Ok
+                        }
+                    }
+                    mb::CMD_STATUS_INVALID_DATA => DaliSendResult::Framing,
+                    mb::CMD_STATUS_EARLY | mb::CMD_STATUS_TIMEOUT => DaliSendResult::Timeout,
+                    mb::CMD_STATUS_ANSWER => DaliSendResult::Answer((res >> 8) as u8),
+                    _ => DaliSendResult::DriverError("Unknown status".into()),
+                })
+                .unwrap();
+        }
+        // Try filling empty slots with commands
+        'add: while ((1 << next_slot) & mask) != 0 {
+            let req = match recv.try_recv() {
+                Ok(req) => req,
+                Err(e) => match e {
+                    TryRecvError::Empty => break 'add,
+                    TryRecvError::Disconnected => break 'outer,
+                },
+            };
+            if let DaliFrame::Frame16(frame) = req.cmd.data {
+                match timeout(MB_TIMEOUT,ctxt
+                              .write_single_register(mb::DALI_CMD_1 + next_slot, u16::from_be_bytes(frame)))
+                    .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        send_driver_error(req, e);
+                        continue 'outer;
+                    }
+                    Err(e) => {
+                        send_driver_error(req, e);
+                        continue 'outer;
+                    }
+                    
+                };
+                queue.push_back(req);
+                //println!("Sent {}", next_slot);
+            } else {
+                req.reply
+                    .send(DaliSendResult::DriverError(
+                        "Only 16 bit frames supported".into(),
+                    ))
+                    .unwrap();
+            }
+            next_slot = (next_slot + 1) & 7;
+        }
     }
+    println!("Driver exited");
     Ok(())
 }
 
@@ -140,6 +300,15 @@ impl DaliDriver for Dgw521Driver {
     }
 }
 
+impl Drop for Dgw521Driver {
+    fn drop(&mut self) {
+        if self.send_cmd.take().is_some() {
+            if let Some(join) = self.join.take() {
+                let _ = block_on(join);
+            }
+        }
+    }
+}
 fn driver_open(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, OpenError> {
     let port = params
         .get("port")
@@ -161,7 +330,7 @@ fn driver_open(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, O
                 ));
             }
         },
-        Some(_) | None => Parity::None,
+        Some(_) | None => Parity::Even,
     };
     match Dgw521Driver::new(port, baud_rate, parity) {
         Err(e) => Err(OpenError::DriverError(Box::new(e))),

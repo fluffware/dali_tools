@@ -4,7 +4,7 @@ use dali::utils::device_info;
 use dali::utils::memory_banks;
 use dali_tools as dali;
 extern crate clap;
-use clap::{Arg, Command};
+use clap::{value_parser, Arg, Command};
 
 #[tokio::main]
 async fn main() {
@@ -20,18 +20,24 @@ async fn main() {
                 .default_value("default")
                 .help("Select DALI-device"),
         )
-        .arg(Arg::new("ADDR").long("required").help("Address"))
+        .arg(
+            Arg::new("ADDR")
+                .required(true)
+                .value_parser(value_parser!(u8))
+                .help("Address"),
+        )
         .arg(
             Arg::new("memory_banks")
                 .short('m')
                 .long("memory-banks")
+                .value_parser(value_parser!(bool))
                 .default_value("false")
                 .default_missing_value("true")
                 .help("Read information from memory banks"),
         )
         .get_matches();
 
-    let addr: Short = match matches.get_one("ADDR") {
+    let addr: Short = match matches.get_one::<u8>("ADDR") {
         Some(&x) if x >= 1 && x <= 64 => Short::new(x),
         Some(_) => {
             println!("Address out of range");
@@ -42,9 +48,7 @@ async fn main() {
             return;
         }
     };
-    let device_name = matches
-        .get_one::<String>("DEVICE")
-        .unwrap();
+    let device_name = matches.get_one::<String>("DEVICE").unwrap();
     let read_memory = *matches.get_one::<bool>("memory_banks").unwrap();
     let mut driver = match dali::drivers::open(device_name) {
         Ok(d) => d,

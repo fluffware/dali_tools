@@ -12,15 +12,19 @@ pru_driver= []
 
 [dependencies]
 futures	= "0.3.*"
+futures-util = "*"
 tokio= {version = "1.32", features = ["macros", "rt-multi-thread", "time", "io-util", "sync", "fs"]}
 tokio-stream = "0.1"
 clap = "4.4"
 rand = "*"
 libusb-async = { git = "https://github.com/fluffware/libusb-rs-async.git", optional = true}
-tokio-modbus = {version="0.5.4", default-features = false, features=["rtu"]}
+tokio-modbus = {version="0.9", default-features = false, features=["rtu"]}
 tokio-serial = {version = "5.4", optional = true}
 lazy_static = "1"
 nix = "0.22"
+crossterm = {version="0.27", features=["event-stream"]}
+log="*"
+tracing-subscriber = "0.3"
 
 [[bin]]
 name = "dali_tools"
@@ -46,3 +50,7 @@ required-features = ["helvar510_driver"]
 [[bin]]
 name = "dali_monitor"
 path = "src/dali_monitor.rs"
+
+[[bin]]
+name = "manual_identify"
+path = "src/manual_identify.rs"

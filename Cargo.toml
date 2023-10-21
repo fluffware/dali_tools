@@ -9,48 +9,47 @@ helvar510_driver= ["libusb-async"]
 dgw521_driver = ["tokio-serial"]
 simulator=[]
 pru_driver= []
+httpd=["hyper","websocket-lite","hyper-websocket-lite", "bytes", "rust-embed"]
 
 [dependencies]
 futures	= "0.3.*"
 futures-util = "*"
 tokio= {version = "1.32", features = ["macros", "rt-multi-thread", "time", "io-util", "sync", "fs"]}
 tokio-stream = "0.1"
-clap = "4.4"
+clap = {version="4.4", features = ["derive"]}
 rand = "*"
 libusb-async = { git = "https://github.com/fluffware/libusb-rs-async.git", optional = true}
 tokio-modbus = {version="0.9", default-features = false, features=["rtu"]}
 tokio-serial = {version = "5.4", optional = true}
 lazy_static = "1"
 nix = "0.22"
-crossterm = {version="0.27", features=["event-stream"]}
 log="*"
 tracing-subscriber = "0.3"
+serde_json = "1.0.91"
+serde = "*"
+serde_derive = "*"
 
-[[bin]]
-name = "dali_tools"
-path = "src/main.rs"
 
-[[bin]]
-name = "swap_addr"
-path = "src/swap_addr.rs"
-
-[[bin]]
-name = "query_device"
-path = "src/query_device.rs"
-
-[[bin]]
-name = "identify"
-path = "src/identify.rs"
+hyper = {version="*", features = ["server", "runtime", "http1", "http2"], optional=true}
+hyper-staticfile = {version = "*", optional=true}
+form_urlencoded = {version = "1.0", optional=true}
+websocket-lite = {version = "0.5.2", optional=true}
+hyper-websocket-lite = {version = "0.5.0", optional=true}
+websocket-codec = {version = "0.5.2", optional=true}
+bytes={version="*", optional=true}
+rust-embed={version="6.7.0", features=["include-exclude"], optional=true}
 
 [[bin]]
 name = "helvar_dump"
-path = "src/helvar_dump.rs"
+path = "src/bin/helvar_dump.rs"
 required-features = ["helvar510_driver"]
 
 [[bin]]
-name = "dali_monitor"
-path = "src/dali_monitor.rs"
-
-[[bin]]
 name = "manual_identify"
-path = "src/manual_identify.rs"
+path = "src/bin/manual_identify.rs"
+required-features = ["httpd"]
+
+[patch.crates-io]
+websocket-lite = {git = "https://github.com/1tgr/rust-websocket-lite.git"}
+websocket-codec = {git = "https://github.com/1tgr/rust-websocket-lite.git"}
+hyper-websocket-lite = {git = "https://github.com/1tgr/rust-websocket-lite.git"}

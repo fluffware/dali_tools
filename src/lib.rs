@@ -2,6 +2,8 @@ extern crate futures;
 extern crate tokio;
 #[macro_use]
 extern crate lazy_static;
+pub mod error;
+
 pub mod base {
     pub mod address;
     pub mod device_type;
@@ -28,3 +30,5 @@ pub mod defs {
         pub mod status;
     }
 }
+
+pub mod httpd;

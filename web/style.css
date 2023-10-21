@@ -1,27 +1,18 @@
 body {
+    margin: 0;
     background: #80f080;
+    height:100vh;
 }
-
-#live_frame
-{
-    position: relative;
+#top {
+    background:red;
+    height: 50%;
+    overflow:auto;
 }
-
-#live_frame svg
-{
-    position: absolute;
-    top: 0px;
-    left: 0px;
+#swipe {
+    background: yellow;
+    height: 50%;
+    overflow:auto;
 }
-
-#live_frame video
-{
-    border: solid;
+#address {
+    font-size: 50px;
 }
-    
-svg rect {
-    fill: none;
-    stroke: black;
-    stroke-width: 3px;
-}
-

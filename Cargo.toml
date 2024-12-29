@@ -9,6 +9,7 @@ helvar510_driver= ["libusb-async"]
 dgw521_driver = ["tokio-serial"]
 simulator=[]
 pru_driver= []
+dali_rpi_driver= ["tokio-serial"]
 httpd=["hyper","websocket-lite","hyper-websocket-lite", "bytes", "rust-embed"]
 
 [dependencies]

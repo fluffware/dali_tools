@@ -140,6 +140,7 @@ async fn driver_thread(
                 }
                 continue 'outer;
             }
+
             Err(e) => {
                 if let Some(req) = queue.pop_front() {
                     oldest_slot = (oldest_slot + 1) & 7;

@@ -117,7 +117,7 @@ async fn identify_setup(
             DaliSendResult::Timeout => continue,
             e => return Err(Box::new(e)),
         }
-        send_set_dtr0(driver, space, PRIORITY_5);
+        send_set_dtr0(driver, space, PRIORITY_5).await;
         for b in 0..10 {
             let cmd = cmd::SET_SCENE_6 + b;
             if (BIT_SEQ[i as usize] & (1 << b)) == 0 {
@@ -126,7 +126,7 @@ async fn identify_setup(
                     .check_send()?;
             }
         }
-        send_set_dtr0(driver, mark, PRIORITY_5);
+        send_set_dtr0(driver, mark, PRIORITY_5).await;
         for b in 0..10 {
             let cmd = cmd::SET_SCENE_6 + b;
             if (BIT_SEQ[i as usize] & (1 << b)) != 0 {

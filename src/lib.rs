@@ -30,5 +30,5 @@ pub mod defs {
         pub mod status;
     }
 }
-
+#[cfg(feature="httpd")]
 pub mod httpd;

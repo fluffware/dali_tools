@@ -22,3 +22,6 @@ pub mod simulator;
 
 #[cfg(feature = "pru_driver")]
 pub mod pru;
+
+#[cfg(feature = "dali_rpi_driver")]
+pub mod dali_rpi;

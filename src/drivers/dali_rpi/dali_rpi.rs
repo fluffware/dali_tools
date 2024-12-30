@@ -2,7 +2,8 @@ use crate::drivers;
 use crate::tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::utils::dyn_future::DynFuture;
 use drivers::driver::{
-    DaliBusEventResult, DaliDriver, DaliFrame, DaliSendResult, DriverInfo, OpenError,
+    DaliBusEvent, DaliBusEventResult, DaliBusEventType, DaliDriver, DaliFrame, DaliSendResult,
+    DriverInfo, OpenError,
 };
 use drivers::send_flags::Flags;
 use drivers::utils::{DALIcmd, DALIreq};
@@ -13,12 +14,12 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::time::Instant;
 use tokio::select;
 use tokio::sync::mpsc::{self};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
-use tokio::time::Instant;
 use tokio_serial::{Parity, SerialStream};
 
 #[derive(Debug)]
@@ -54,10 +55,33 @@ impl fmt::Display for DriverError {
         }
     }
 }
+fn bytes_to_event(bytes: &[u8]) -> Option<DaliBusEvent> {
+    let event_type = match bytes[1] {
+        4 => match bytes[3] {
+            8 => Some(DaliBusEventType::Frame8(bytes[4])),
+            16 => Some(DaliBusEventType::Frame16([bytes[4], bytes[5]])),
+            24 => Some(DaliBusEventType::Frame24([bytes[4], bytes[5], bytes[6]])),
+	    _ => Some(DaliBusEventType::FramingError),
+        },
+        6 => Some(DaliBusEventType::FramingError),
+        7 => Some(DaliBusEventType::BusPowerOff),
+        8 => Some(DaliBusEventType::BusPowerOn),
+        _ => None,
+    };
+    if let Some(event_type) = event_type {
+        Some(DaliBusEvent {
+            timestamp: Instant::now(),
+            event_type,
+        })
+    } else {
+        None
+    }
+}
 
 async fn driver_thread(
     mut serial: SerialStream,
     mut recv: mpsc::Receiver<DALIreq>,
+    mut monitor: mpsc::Sender<DaliBusEvent>,
 ) -> Result<(), DriverError> {
     let mut req_timeout = None;
     let mut ser_rx_buf = [0u8; 16];
@@ -123,39 +147,44 @@ async fn driver_thread(
                 req_timeout = None;
             },
             r = serial.read(&mut ser_rx_buf[ser_rx_pos..]) => {
-		match &r {
-		    Ok(ref n) => {
-			let now = Instant::now();
-			// Skip buffered data if it's too old
-			if now - last_rx_time > Duration::from_millis(200) {
-			    ser_rx_buf.copy_within(ser_rx_pos.., 0);
-			    ser_rx_pos = 0;
-			}
-			ser_rx_pos += n;
-			if ser_rx_pos >= 8 {
-			    //println!("Reply: {:?}", &ser_rx_buf[0..8]);
-			    if let Some((seqno, _)) = &current_req {
-				if *seqno == ser_rx_buf[0] {
-				    let (_,req) = current_req.take().unwrap();
-				    let result = match ser_rx_buf[1] {
-					2 => Some(DaliSendResult::Ok),
-					3 => Some(DaliSendResult::Answer(ser_rx_buf[4])),
-					10 => Some(DaliSendResult::Timeout),
-					_ => None,
-				    };
-				    if let Some(result) = result {
-					req.reply.send(result).unwrap();
-				    }
+                match &r {
+                    Ok(ref n) => {
+                        let now = Instant::now();
+                        // Skip buffered data if it's too old
+                        if now - last_rx_time > Duration::from_millis(200) {
+                            ser_rx_buf.copy_within(ser_rx_pos.., 0);
+                            ser_rx_pos = 0;
+                        }
+                        ser_rx_pos += n;
+                        if ser_rx_pos >= 8 {
+                            //println!("Reply: {:?}", &ser_rx_buf[0..8]);
+                            if let Some((seqno, _)) = &current_req {
+                                if *seqno == ser_rx_buf[0] {
+                                    let (_,req) = current_req.take().unwrap();
+                                    let result = match ser_rx_buf[1] {
+                                        2 => Some(DaliSendResult::Ok),
+                                        3 => Some(DaliSendResult::Answer(ser_rx_buf[4])),
+                                        10 => Some(DaliSendResult::Timeout),
+                                        _ => None,
+                                    };
+                                    if let Some(result) = result {
+                                        req.reply.send(result).unwrap();
+                                    }
+                                }
+                            }
+			    if ser_rx_buf[0] == 0 {
+				if let Some(event) = bytes_to_event(&ser_rx_buf) {
+				     let _ = monitor.send(event).await;
 				}
-			    }
-			    ser_rx_buf.copy_within(8.., 0);
-			    ser_rx_pos -= 8;
-			}
-		    }
-		    Err(e) => {
-		
-		    }
-		}
+                            }
+                            ser_rx_buf.copy_within(8.., 0);
+                            ser_rx_pos -= 8;
+                        }
+            }
+                    Err(e) => {
+
+                    }
+                }
             }
         }
     }
@@ -195,21 +224,22 @@ pub struct DaliRpiDriver {
     join: Option<JoinHandle<Result<(), DriverError>>>,
     // Needs to be an option so that it can be dropped to signal the receiver
     send_cmd: Option<mpsc::Sender<DALIreq>>,
-    //    _send_monitor: Arc<Mutex<Option<mpsc::Sender<DaliBusEvent>>>>,
+    rx_monitor: mpsc::Receiver<DaliBusEvent>,
 }
 
 impl DaliRpiDriver {
     fn new(port: &str, baud_rate: u32, parity: Parity) -> Result<DaliRpiDriver, DriverError> {
         let (tx, rx) = mpsc::channel::<DALIreq>(10);
+        let (tx_monitor, rx_monitor) = mpsc::channel::<DaliBusEvent>(10);
         let serial = match SerialStream::open(&tokio_serial::new(port, baud_rate).parity(parity)) {
             Ok(s) => s,
             Err(e) => return Err(DriverError::SerialError(e)),
         };
-        let join = tokio::spawn(driver_thread(serial, rx));
+        let join = tokio::spawn(driver_thread(serial, rx, tx_monitor));
         let driver = DaliRpiDriver {
             join: Some(join),
             send_cmd: Some(tx),
-            //_send_monitor: monitor,
+            rx_monitor,
         };
         Ok(driver)
     }
@@ -249,15 +279,15 @@ impl DaliDriver for DaliRpiDriver {
     }
 
     fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
-        Box::pin(std::future::ready(Err("Not implemented".into())))
+	Box::pin(async{self.rx_monitor.recv().await.ok_or("Event source close".into())})
     }
 
     fn current_timestamp(&self) -> std::time::Instant {
-        Instant::now().into_std()
+        Instant::now()
     }
 
     fn wait_until(&self, end: std::time::Instant) -> DynFuture<()> {
-        Box::pin(tokio::time::sleep_until(Instant::from(end)))
+        Box::pin(tokio::time::sleep_until(end.into()))
     }
 }
 

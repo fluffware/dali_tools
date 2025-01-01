@@ -2,6 +2,7 @@ body {
     margin: 0;
     background: #80f080;
     height:100vh;
+    font-size: 50px;
 }
 #top {
     background:red;
@@ -13,6 +14,14 @@ body {
     height: 50%;
     overflow:auto;
 }
-#address {
+#address_map {
+    font-size: 50px;
+}
+
+#address_entry {
+     font-size: 50px;
+}
+
+#find_all, #set_address {
     font-size: 50px;
 }

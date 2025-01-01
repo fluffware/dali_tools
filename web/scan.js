@@ -12,6 +12,8 @@ let address = 0;
 let index = 0;
 let max_index = 0;
 
+const MASK=255;
+
 function step(dir) {
     tick.play();
     if (dir > 0) {
@@ -30,10 +32,13 @@ function step(dir) {
 function handle_reply(reply)
 {
     if (reply.ScanUpdate) {
-	address = reply.ScanUpdate.address;
+	address = reply.ScanUpdate.current_address;
 	max_index = reply.ScanUpdate.length - 1;
 	address_elem.innerText = address;
 	max_index_elem.innerText = max_index + 1;
+	new_address_elem.innerText = 
+	    reply.ScanUpdate.new_address == MASK 
+	    ? "-":reply.ScanUpdate.new_address;
     }
     console.log(reply);
 }
@@ -111,8 +116,10 @@ function startup()
     tick = document.getElementById("tick");
     swipe = document.getElementById("swipe");
     address_elem = document.getElementById("address");
+    new_address_elem = document.getElementById("new_address");
     index_elem = document.getElementById("index");
     max_index_elem = document.getElementById("max_index");
+    address_entry_elem = document.getElementById("address_entry");
     swipe.addEventListener("click", function (event) {
 	event.preventDefault();
     })
@@ -167,4 +174,20 @@ function startup()
 	ws.send(JSON.stringify({FindAll:true}))
     });
 
+    let set_address = document.getElementById("set_address");
+    set_address.addEventListener("click", function() {
+	let new_addr = parseInt(address_entry_elem.value);
+	if (new_addr!=null) { 
+	    ws.send(JSON.stringify({NewAddress:{address: new_addr, index: index}}))
+	    if (new_addr == 64) {
+		address_entry_elem.value = 1;
+	    } else {
+		address_entry_elem.value = new_addr + 1;
+	    }
+	}
+    });
+
+    ws.onopen = (msg) => {
+	ws.send(JSON.stringify({RequestScanUpdate:true}))
+    }
 }

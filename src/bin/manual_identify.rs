@@ -2,12 +2,13 @@ use std::error::Error;
 use std::future::{self};
 use std::net::IpAddr;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as BlockingMutex};
 
 use bytes::Bytes;
 use clap::Parser;
+use futures::future::{Fuse, FutureExt};
+use log::{debug, error, info};
 
-use log::{debug, error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::Duration;
@@ -21,6 +22,7 @@ use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, /*PRIORITY_1, PRIORITY_5, SEND_TWICE*/};
 use dali::httpd::{self, ServerConfig};
+//use dali::utils::filtered_vec::FilteredVec;
 use dali_tools as dali;
 
 type DynResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -59,14 +61,18 @@ pub struct GearData {
 pub struct IdentificationCtxt {
     current_gear: usize,
     target_gear: usize,
-    gears: Vec<GearData>,
+    gears: BlockingMutex<Vec<GearData>>,
     low_level: u8,  // Set to MASK for min level
     high_level: u8, // Set to MASK for max level
+    current_high: bool,
 }
 
 type SyncDriver = Arc<Mutex<Box<dyn DaliDriver>>>;
 
-async fn find(driver: &SyncDriver, ctxt: &mut IdentificationCtxt) -> DynResult<()> {
+async fn find<F>(driver: &SyncDriver, found: &mut F) -> DynResult<()>
+where
+    F: FnMut(GearData),
+{
     for addr in 1..=64 {
         debug!("Checking {}", addr);
         let driver = &mut **driver.lock().await;
@@ -87,7 +93,7 @@ async fn find(driver: &SyncDriver, ctxt: &mut IdentificationCtxt) -> DynResult<(
             match get_long_address(driver, &Short::new(addr)).await {
                 Ok(l) => {
                     info!("{}: Long: {:06x}\r\n", addr, l);
-                    ctxt.gears.push(GearData {
+                    found(GearData {
                         long: l,
                         old_addr: Some(addr),
                         new_addr: None,
@@ -139,21 +145,39 @@ fn send_scan_update(
     ctxt: &mut IdentificationCtxt,
 ) -> DynResult<()> {
     let index = ctxt.current_gear as u8;
-    let length = ctxt.gears.len() as u8;
-    let address = if index < length {
-        if let Some(addr) = ctxt.gears[usize::from(index)].old_addr {
-            addr
-        } else {
-            0
+    let gears = ctxt.gears.lock().unwrap();
+    let length = gears.len() as u8;
+    let mut current_address = MASK;
+    let mut new_address = MASK;
+
+    if index < length {
+        if let Some(&GearData {
+            old_addr, new_addr, ..
+        }) = gears.get(usize::from(index))
+        {
+            current_address = old_addr.unwrap_or(MASK);
+            new_address = new_addr.unwrap_or(MASK);
         }
-    } else {
-        0
     };
+
     send.send(Bytes::from(
         serde_json::to_string(&DaliReplies::ScanUpdate {
-            address,
+            current_address,
+            new_address,
             index,
             length,
+        })
+        .unwrap(),
+    ))?;
+    Ok(())
+}
+
+fn send_gear(send: &mut broadcast::Sender<Bytes>, gear: &GearData) -> DynResult<()> {
+    send.send(Bytes::from(
+        serde_json::to_string(&DaliReplies::GearAdded {
+            long_address: gear.long,
+            current_address: gear.old_addr,
+            new_address: gear.new_addr,
         })
         .unwrap(),
     ))?;
@@ -171,18 +195,51 @@ async fn handle_commands(
             ctxt.target_gear = usize::from(addr);
         }
         DaliCommands::FindAll(_) => {
-            ctxt.gears.clear();
-            find(driver, ctxt).await?;
+            {
+                let mut gears = ctxt.gears.lock().unwrap();
+                gears.clear();
+            }
+            find(driver, &mut |gd| {
+                ctxt.gears.lock().unwrap().push(gd);
+                send_gear(send, &gd).unwrap();
+            })
+            .await?;
             ctxt.current_gear = 0;
             ctxt.target_gear = 0;
             send_scan_update(send, ctxt)?;
             set_low_level(driver, ctxt, &Address::Broadcast).await?;
-            if let Some(GearData {
+            let addr = if let Some(&GearData {
                 old_addr: Some(addr),
                 ..
-            }) = ctxt.gears.get(0)
+            }) = ctxt.gears.lock().unwrap().get(0)
             {
-                set_high_level(driver, ctxt, &Address::Short(Short::new(*addr))).await?;
+                Some(addr)
+            } else {
+                None
+            };
+            if let Some(addr) = addr {
+                set_high_level(driver, ctxt, &Address::Short(Short::new(addr))).await?;
+                ctxt.current_high = true;
+            }
+        }
+        DaliCommands::RequestScanUpdate(_) => {
+            send_scan_update(send, ctxt)?;
+        }
+        DaliCommands::NewAddress { address, index } => {
+            {
+                let mut gears = ctxt.gears.lock().unwrap();
+                if let Some(gear) = gears.get_mut(usize::from(index)).as_mut() {
+                    if address >= 1 && address <= 64 {
+                        gear.new_addr = Some(address);
+                    }
+                }
+            }
+            send_scan_update(send, ctxt)?;
+        }
+        DaliCommands::RequestGearList(_) => {
+            let gears = ctxt.gears.lock().unwrap();
+            for g in gears.iter() {
+                send_gear(send, g)?;
             }
         }
     }
@@ -190,14 +247,37 @@ async fn handle_commands(
 }
 
 #[derive(Serialize, Deserialize)]
+enum DaliSetIntensity {
+    Intensity(u8),
+    Low(bool),
+    High(bool),
+}
+
+#[derive(Serialize, Deserialize)]
 enum DaliCommands {
     ScanAddress(u8),
     FindAll(bool),
+    RequestScanUpdate(bool),
+    RequestGearList(bool),
+    NewAddress { address: u8, index: u8 },
 }
 
 #[derive(Serialize, Deserialize)]
 enum DaliReplies {
-    ScanUpdate { address: u8, index: u8, length: u8 },
+    ScanUpdate {
+        current_address: u8,
+        new_address: u8,
+        index: u8,
+        length: u8,
+    },
+    GearAdded {
+        long_address: u32,
+        current_address: Option<u8>,
+        new_address: Option<u8>,
+    },
+    GearRemoved {
+        long_address: u32,
+    },
 }
 
 async fn cmd_thread(
@@ -208,6 +288,10 @@ async fn cmd_thread(
 ) {
     let mut step_gear = false;
     tokio::pin!(recv);
+    let start_blink = Fuse::terminated();
+    tokio::pin!(start_blink);
+    let tick_blink = Fuse::terminated();
+    tokio::pin!(tick_blink);
     loop {
         tokio::select! {
             res = recv.recv() => {
@@ -237,12 +321,62 @@ async fn cmd_thread(
                     None=> break
                 }
             }
+            _ = &mut start_blink => {
+                tick_blink.set(tokio::time::sleep(Duration::from_millis(300)).fuse());
+            }
+            _ = &mut tick_blink => {
+                let mut ctxt = ctxt.lock().await;
+                tick_blink.set(tokio::time::sleep(Duration::from_millis(300)).fuse());
+                let addr = if let Some(&GearData{old_addr: Some(addr), ..})
+                    = ctxt.gears.lock().unwrap().get(ctxt.current_gear) {
+                        Some(addr)
+                    }else {
+                        None
+
+                    };
+
+                if let Some(addr) = addr  {
+                    if let Err(e) = {
+                            if ctxt.current_high {
+                                ctxt.current_high = false;
+                                set_low_level(&driver,
+                                              &mut *ctxt,
+                                              &Address::Short(Short::new(addr))).await
+                            } else {
+                                ctxt.current_high = true;
+                                set_high_level(&driver,
+                                               &mut *ctxt,
+                                               &Address::Short(Short::new(addr))).await
+                            }
+                        } {
+                            error!("Failed to blink: {}",e);
+                        }
+                    }
+            }
             _ = future::ready(()), if step_gear => {
 
+                start_blink.set(Fuse::terminated());
+                tick_blink.set(Fuse::terminated());
                 let mut ctxt = ctxt.lock().await;
+                let addr = if let Some(&GearData{old_addr: Some(addr), ..}) =
+                    ctxt.gears.lock().unwrap().get(ctxt.current_gear) {
+                        Some(addr)
+                    } else {
+                        None
+                    };
+                if !ctxt.current_high {
+                    if let Some(addr) = addr {
+                        if let Err(e) =
+                            set_high_level(&driver,
+                                           &mut *ctxt,
+                                           &Address::Short(Short::new(addr))).await {
+                                error!("Failed to set high level: {}",e);
+                            }
+                    }
+                }
                 if ctxt.current_gear < ctxt.target_gear {
                     ctxt.current_gear += 1;
-                    if let Some(&GearData{old_addr: Some(addr), ..}) = ctxt.gears.get(ctxt.current_gear) {
+                    if let Some(addr) = addr {
                         if let Err(e) =
                             set_high_level(&driver,
                                            &mut *ctxt, &Address::Short(Short::new(addr))).await {
@@ -250,7 +384,7 @@ async fn cmd_thread(
                         }
                     }
                 } else {
-                    if let Some(&GearData{old_addr: Some(addr), ..}) = ctxt.gears.get(ctxt.current_gear) {
+                    if let Some(addr) = addr {
                         if let Err(e) =
                             set_low_level(&driver,
                                            &mut *ctxt, &Address::Short(Short::new(addr))).await {
@@ -265,7 +399,7 @@ async fn cmd_thread(
                 {
                     error!("Failed to send scan update (WS): {}",e);
                 }
-
+                start_blink.set(tokio::time::sleep(Duration::from_millis(1000)).fuse());
             }
         }
     }
@@ -311,11 +445,12 @@ async fn main() -> ExitCode {
 
     debug!("Low: {} High: {}", args.low, args.high);
     let id_ctxt = IdentificationCtxt {
-        gears: Vec::new(),
+        gears: BlockingMutex::new(Vec::new()),
         current_gear: 0,
         target_gear: 0,
         low_level: args.low,
         high_level: args.high,
+        current_high: false,
     };
     let driver = match dali::drivers::open(&args.device) {
         Ok(d) => d,

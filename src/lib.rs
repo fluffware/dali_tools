@@ -17,6 +17,7 @@ pub mod utils {
     pub mod dyn_future;
     pub mod long_address;
     pub mod memory_banks;
+    pub mod filtered_vec;
 }
 
 pub mod drivers;
@@ -30,5 +31,6 @@ pub mod defs {
         pub mod status;
     }
 }
-#[cfg(feature="httpd")]
+
+#[cfg(feature = "httpd")]
 pub mod httpd;

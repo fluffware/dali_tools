@@ -1,9 +1,9 @@
 use crate::error::DynResult;
-use crate::httpd::web_server::{self,ServerConfig};
+use crate::httpd::web_server::{self, ServerConfig};
 use bytes::Bytes;
+use rust_embed::RustEmbed;
 use std::future::Future;
 use std::net::IpAddr;
-use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
 #[folder = "web"]
@@ -18,7 +18,6 @@ struct WebFiles;
 pub fn start(
     conf: ServerConfig,
 ) -> DynResult<(impl Future<Output = Result<(), hyper::Error>>, IpAddr, u16)> {
-
     let conf = conf.web_resource(Box::new(|path| {
         let mut path = path.trim_start_matches('/');
         if path.is_empty() {

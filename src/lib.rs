@@ -15,9 +15,9 @@ pub mod utils {
     pub mod device_info;
     pub mod discover;
     pub mod dyn_future;
+    pub mod filtered_vec;
     pub mod long_address;
     pub mod memory_banks;
-    pub mod filtered_vec;
 }
 
 pub mod drivers;

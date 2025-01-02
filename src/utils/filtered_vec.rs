@@ -2,23 +2,22 @@ use std::cell::RefCell;
 use std::ops::{Index, IndexMut};
 
 pub struct Iter<'a, T>
-where T: 'a
+where
+    T: 'a,
 {
     vec: &'a FilteredVec<T>,
     next: usize,
 }
 
-impl<'a, T> Iterator for Iter<'a, T>
-{
+impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
-    fn next(&mut self) -> Option<Self::Item>
-    {
+    fn next(&mut self) -> Option<Self::Item> {
         self.vec.build_until(self.next);
         let map = self.vec.map.borrow();
         if map.len() <= self.next {
             return None;
         }
-        let v =  &self.vec.vec[map[self.next]];
+        let v = &self.vec.vec[map[self.next]];
         self.next += 1;
         Some(v)
     }
@@ -29,7 +28,6 @@ pub struct FilteredVec<T> {
     map: RefCell<Vec<usize>>,
     predicate: Box<dyn Fn(&T) -> bool + Send>,
 }
-
 
 impl<T> FilteredVec<T> {
     pub fn new<P>(vec: Vec<T>, predicate: P) -> FilteredVec<T>
@@ -74,26 +72,23 @@ impl<T> FilteredVec<T> {
         map.len()
     }
 
-    pub fn iter<'a>(&'a self) -> Iter<'a, T>
-    {
-        Iter{vec: self, next: 0}
+    pub fn iter<'a>(&'a self) -> Iter<'a, T> {
+        Iter { vec: self, next: 0 }
     }
 
     pub fn predicate<P>(&mut self, predicate: P)
     where
-        P: Fn(&T) -> bool + 'static + Send
+        P: Fn(&T) -> bool + 'static + Send,
     {
         self.map.borrow_mut().clear();
         self.predicate = Box::new(predicate);
     }
 
-    pub fn push(&mut self, v: T)
-    {
+    pub fn push(&mut self, v: T) {
         self.vec.push(v)
     }
-    
-    pub fn clear(&mut self)
-    {
+
+    pub fn clear(&mut self) {
         self.vec.clear();
         self.map.borrow_mut().clear();
     }
@@ -135,15 +130,13 @@ impl<T> IndexMut<usize> for FilteredVec<T> {
         v
     }
 }
-impl<T> From<Vec<T>> for FilteredVec<T>
-{
+impl<T> From<Vec<T>> for FilteredVec<T> {
     fn from(vec: Vec<T>) -> FilteredVec<T> {
         FilteredVec::new(vec, |_| true)
     }
 }
 
-impl<T> Into<Vec<T>> for FilteredVec<T>
-{
+impl<T> Into<Vec<T>> for FilteredVec<T> {
     fn into(self) -> Vec<T> {
         self.vec
     }
@@ -177,33 +170,39 @@ fn test_index_mut() {
 fn test_iter() {
     let sv = FilteredVec::new(vec![1, 2, 3, 4, 5, 6, 7, 8], |x| x % 2 == 0);
 
-    for (i,v) in sv.iter().enumerate() {
+    for (i, v) in sv.iter().enumerate() {
         assert_eq!(*v, sv[i]);
     }
 
     let sv = FilteredVec::new(vec![1, 2, 3, 4, 5, 6, 7, 8], |x| x % 2 == 0);
     let even: Vec<i32> = sv.iter().cloned().collect();
-    assert_eq!(&even, &[2,4,6,8]);
-
+    assert_eq!(&even, &[2, 4, 6, 8]);
 }
 #[test]
 fn test_into() {
-    let v1:Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    let v1: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8];
     let sv = FilteredVec::from(v1.clone());
     let v2: Vec<i32> = sv.into();
     assert_eq!(v1, v2);
 }
 
 #[test]
-fn test_predicate()
-{
+fn test_predicate() {
     let mut v1 = FilteredVec::from(vec![1, 2, 3, 4, 5, 6, 7, 8]);
-    assert_eq!(&[1, 2, 3, 4, 5, 6, 7, 8], v1.iter().cloned().collect::<Vec<i32>>().as_slice());
-    v1.predicate(|x| x%2==0);
-    assert_eq!(&[2, 4, 6, 8], v1.iter().cloned().collect::<Vec<i32>>().as_slice());
-    v1.predicate(|x| x%2==1);
-    assert_eq!(&[1,3,5,7], v1.iter().cloned().collect::<Vec<i32>>().as_slice());
+    assert_eq!(
+        &[1, 2, 3, 4, 5, 6, 7, 8],
+        v1.iter().cloned().collect::<Vec<i32>>().as_slice()
+    );
+    v1.predicate(|x| x % 2 == 0);
+    assert_eq!(
+        &[2, 4, 6, 8],
+        v1.iter().cloned().collect::<Vec<i32>>().as_slice()
+    );
+    v1.predicate(|x| x % 2 == 1);
+    assert_eq!(
+        &[1, 3, 5, 7],
+        v1.iter().cloned().collect::<Vec<i32>>().as_slice()
+    );
     v1.predicate(|_| false);
-    assert_eq!(v1.len(),0);
-    
+    assert_eq!(v1.len(), 0);
 }

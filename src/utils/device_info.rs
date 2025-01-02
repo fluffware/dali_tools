@@ -251,10 +251,10 @@ pub async fn read_device_info(
         e => return Err(e),
     };
 
-    info.groups = match 
-        (send_device_cmd(d, &addr, cmd::QUERY_GROUPS_0_7, EXPECT_ANSWER).await,
-         send_device_cmd(d, &addr, cmd::QUERY_GROUPS_8_15, EXPECT_ANSWER).await)
-    {
+    info.groups = match (
+        send_device_cmd(d, &addr, cmd::QUERY_GROUPS_0_7, EXPECT_ANSWER).await,
+        send_device_cmd(d, &addr, cmd::QUERY_GROUPS_8_15, EXPECT_ANSWER).await,
+    ) {
         (DaliSendResult::Answer(l), DaliSendResult::Answer(h)) => {
             Some(((h as u16) << 8) | (l as u16))
         }

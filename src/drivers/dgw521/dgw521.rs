@@ -201,9 +201,14 @@ async fn driver_thread(
                 },
             };
             if let DaliFrame::Frame16(frame) = req.cmd.data {
-                match timeout(MB_TIMEOUT,ctxt
-                              .write_single_register(mb::DALI_CMD_1 + next_slot, u16::from_be_bytes(frame)))
-                    .await
+                match timeout(
+                    MB_TIMEOUT,
+                    ctxt.write_single_register(
+                        mb::DALI_CMD_1 + next_slot,
+                        u16::from_be_bytes(frame),
+                    ),
+                )
+                .await
                 {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
@@ -214,7 +219,6 @@ async fn driver_thread(
                         send_driver_error(req, e);
                         continue 'outer;
                     }
-                    
                 };
                 queue.push_back(req);
                 //println!("Sent {}", next_slot);

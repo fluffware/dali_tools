@@ -5,17 +5,13 @@ use crate::drivers::send_flags::Flags;
 use crate::drivers::simulator::timing;
 use crate::utils::dyn_future::DynFuture;
 use std::borrow::BorrowMut;
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError};
 use tokio::sync::oneshot;
-use std::cmp::Reverse;
 use tokio::time;
-
-
-
-
 
 pub struct DaliSimulatorDriver {
     bus: Arc<DaliSimulatorBus>,
@@ -152,38 +148,36 @@ struct DaliSimulatorBusState {
 
 async fn bus_engine(bus: Arc<DaliSimulatorBus>, mut recv: mpsc::Receiver<()>) {
     loop {
-        
         match recv.try_recv() {
             Ok(event) => {
-		println!("Event: {:?}", event);
-	    }
+                println!("Event: {:?}", event);
+            }
             Err(TryRecvError::Empty) => {
-		let mut bump_time = false;
+                let mut bump_time = false;
                 {
                     let mut state = bus.state.lock().unwrap();
-		    loop {
-			let next_time = match state.data.timer_queue.pop()
-			{
-			    None => break,
-			    Some(t) => t.0
-			};
-			if state.data.current_timestamp < next_time {
-			    state.data.current_timestamp = next_time;
-			    bump_time = true ;
-			}
-		    }
-                }
-		if !bump_time {
-                    if recv.recv().await.is_none() {
-			break;
+                    loop {
+                        let next_time = match state.data.timer_queue.pop() {
+                            None => break,
+                            Some(t) => t.0,
+                        };
+                        if state.data.current_timestamp < next_time {
+                            state.data.current_timestamp = next_time;
+                            bump_time = true;
+                        }
                     }
-		}
+                }
+                if !bump_time {
+                    if recv.recv().await.is_none() {
+                        break;
+                    }
+                }
             }
             Err(TryRecvError::Disconnected) => {
                 break;
             }
         }
-	{
+        {
             let mut state = bus.state.lock().unwrap();
             let mut i = 0;
             while i < state.state_changed.len() {
@@ -222,8 +216,8 @@ impl DaliSimulatorBus {
                 state_changed: Vec::new(),
             }),
         });
-	tokio::spawn(bus_engine(bus.clone(), state_changed_recv));
-	bus
+        tokio::spawn(bus_engine(bus.clone(), state_changed_recv));
+        bus
     }
 
     fn current_timestamp(self: &Arc<DaliSimulatorBus>) -> Instant {
@@ -255,9 +249,8 @@ impl DaliSimulatorBus {
         mut handler: Box<dyn FnMut(&mut DaliSimulatorBusData) -> bool + Send>,
     ) {
         let mut state = self.state.lock().unwrap();
-	handler(&mut state.data);
+        handler(&mut state.data);
         state.state_changed.push(handler);
-	
     }
 
     pub fn get_driver_instance(self: &Arc<DaliSimulatorBus>) -> Box<dyn DaliDriver> {
@@ -272,19 +265,20 @@ impl DaliSimulatorBus {
 }
 
 #[cfg(test)]
-
 #[tokio::test]
-async fn test_timer()
-{
+async fn test_timer() {
     let bus = DaliSimulatorBus::new();
     let mut count = 4;
     let start_ts = bus.current_timestamp();
     let end = start_ts + Duration::from_millis(600);
     bus.add_handler(Box::new(move |data| {
-	data.internal_timeout_at(end);
-	println!("Handler called at {:.3}", (data.current_timestamp-start_ts).as_secs_f32());
-	return data.current_timestamp < end;
+        data.internal_timeout_at(end);
+        println!(
+            "Handler called at {:.3}",
+            (data.current_timestamp - start_ts).as_secs_f32()
+        );
+        return data.current_timestamp < end;
     }));
-    
+
     time::sleep(Duration::from_secs(2)).await;
 }

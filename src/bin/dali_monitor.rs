@@ -4,7 +4,7 @@ use dali_tools as dali;
 use std::time::Instant;
 
 extern crate clap;
-use clap::{Command, Arg};
+use clap::{Arg, Command};
 
 #[tokio::main]
 async fn main() {

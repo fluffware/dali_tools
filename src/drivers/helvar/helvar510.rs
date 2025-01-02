@@ -54,7 +54,7 @@ impl fmt::Display for DriverError {
             DriverError::NoInterfaceFound => write!(f, "No interface found"),
             DriverError::CommandError => write!(f, "Copmmand error"),
             DriverError::UsbError => write!(f, "USB error"),
-           // DriverError::ReplyingFailed => write!(f, "Replying failed"),
+            // DriverError::ReplyingFailed => write!(f, "Replying failed"),
         }
     }
 }
@@ -324,14 +324,12 @@ impl DaliDriver for Helvar510driver {
         Box::pin(std::future::ready(Err("Not implemented".into())))
     }
 
-    fn current_timestamp(&self) -> std::time::Instant
-    {
-	Instant::now().into_std()
+    fn current_timestamp(&self) -> std::time::Instant {
+        Instant::now().into_std()
     }
 
-    fn wait_until(&self, end: std::time::Instant) -> DynFuture<()>
-    {
-	Box::pin(tokio::time::sleep_until(Instant::from(end)))
+    fn wait_until(&self, end: std::time::Instant) -> DynFuture<()> {
+        Box::pin(tokio::time::sleep_until(Instant::from(end)))
     }
 }
 /*

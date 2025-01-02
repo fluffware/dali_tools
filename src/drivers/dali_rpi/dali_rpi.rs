@@ -61,7 +61,7 @@ fn bytes_to_event(bytes: &[u8]) -> Option<DaliBusEvent> {
             8 => Some(DaliBusEventType::Frame8(bytes[4])),
             16 => Some(DaliBusEventType::Frame16([bytes[4], bytes[5]])),
             24 => Some(DaliBusEventType::Frame24([bytes[4], bytes[5], bytes[6]])),
-	    _ => Some(DaliBusEventType::FramingError),
+            _ => Some(DaliBusEventType::FramingError),
         },
         6 => Some(DaliBusEventType::FramingError),
         7 => Some(DaliBusEventType::BusPowerOff),
@@ -141,6 +141,8 @@ async fn driver_thread(
                 }
 
             }, if req_timeout.is_some() => {
+        println!("Timedout");
+
                 if let Some((_seq, req)) = current_req.take() {
                     req.reply.send(DaliSendResult::Timeout).unwrap();
                 }
@@ -156,7 +158,7 @@ async fn driver_thread(
                             ser_rx_pos = 0;
                         }
                         ser_rx_pos += n;
-                        if ser_rx_pos >= 8 {
+                        while ser_rx_pos >= 8 {
                             //println!("Reply: {:?}", &ser_rx_buf[0..8]);
                             if let Some((seqno, _)) = &current_req {
                                 if *seqno == ser_rx_buf[0] {
@@ -172,10 +174,10 @@ async fn driver_thread(
                                     }
                                 }
                             }
-			    if ser_rx_buf[0] == 0 {
-				if let Some(event) = bytes_to_event(&ser_rx_buf) {
-				     let _ = monitor.send(event).await;
-				}
+                if ser_rx_buf[0] == 0 {
+                if let Some(event) = bytes_to_event(&ser_rx_buf) {
+                    let _ = monitor.try_send(event);
+                }
                             }
                             ser_rx_buf.copy_within(8.., 0);
                             ser_rx_pos -= 8;
@@ -251,11 +253,6 @@ impl DaliDriver for DaliRpiDriver {
         cmd: DaliFrame,
         flags: Flags,
     ) -> Pin<Box<dyn Future<Output = DaliSendResult> + Send>> {
-        if !matches!(cmd, DaliFrame::Frame16(_)) {
-            return Box::pin(std::future::ready(DaliSendResult::DriverError(
-                "Only 16-bit frames supported when sending".into(),
-            )));
-        }
         let (tx, rx) = oneshot::channel();
         let req = DALIreq {
             cmd: DALIcmd {
@@ -279,7 +276,12 @@ impl DaliDriver for DaliRpiDriver {
     }
 
     fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
-	Box::pin(async{self.rx_monitor.recv().await.ok_or("Event source close".into())})
+        Box::pin(async {
+            self.rx_monitor
+                .recv()
+                .await
+                .ok_or("Event source close".into())
+        })
     }
 
     fn current_timestamp(&self) -> std::time::Instant {

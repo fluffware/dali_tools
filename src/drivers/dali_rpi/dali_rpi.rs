@@ -96,7 +96,7 @@ async fn driver_thread(
                 match req {
                     Some(req) => {
                         let mut bytes = [next_seq,
-                                     (if req.cmd.flags.expect_answer() {0b1} else {0})
+                                         (if req.cmd.flags.expect_answer() {0b1} else {0})
                                          | (if req.cmd.flags.send_twice() {0b10} else {0}),
                                          req.cmd.flags.priority() as u8 | (2 << 3),
                                          req.cmd.data.bit_length() as u8,
@@ -141,7 +141,7 @@ async fn driver_thread(
                 }
 
             }, if req_timeout.is_some() => {
-        println!("Timedout");
+                println!("Timedout");
 
                 if let Some((_seq, req)) = current_req.take() {
                     req.reply.send(DaliSendResult::Timeout).unwrap();
@@ -171,18 +171,19 @@ async fn driver_thread(
                                     };
                                     if let Some(result) = result {
                                         req.reply.send(result).unwrap();
+                                        req_timeout = None;
                                     }
                                 }
                             }
-                if ser_rx_buf[0] == 0 {
-                if let Some(event) = bytes_to_event(&ser_rx_buf) {
-                    let _ = monitor.try_send(event);
-                }
+                            if ser_rx_buf[0] == 0 {
+                                if let Some(event) = bytes_to_event(&ser_rx_buf) {
+                                    let _ = monitor.try_send(event);
+                                }
                             }
                             ser_rx_buf.copy_within(8.., 0);
                             ser_rx_pos -= 8;
                         }
-            }
+                    }
                     Err(e) => {
 
                     }

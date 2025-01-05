@@ -87,7 +87,7 @@ async fn program_short_address(
         .send_frame16(&[cmd::QUERY_SHORT_ADDRESS, 0x00], EXPECT_ANSWER)
         .await
         .check_answer()?;
-    println!("Set {}, got {}", short, a>>1 + 1);
+    println!("Set {}, got {}", short, (a>>1)+1);
     Ok(())
 }
 

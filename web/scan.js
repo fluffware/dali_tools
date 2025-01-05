@@ -15,7 +15,7 @@ let max_index = 0;
 const MASK=255;
 
 function step(dir) {
-    tick.play();
+//    tick.play();
     if (dir > 0) {
 	if (index < max_index) {
 	    index++;
@@ -111,8 +111,21 @@ function socket_uri() {
     return new_uri;
 }
 
+function do_set_address() {
+    let new_addr = parseInt(address_entry_elem.value);
+    if (new_addr!=null) { 
+	ws.send(JSON.stringify({NewAddress:{address: new_addr, index: index}}))
+	if (new_addr == 64) {
+	    address_entry_elem.value = 1;
+	} else {
+	    address_entry_elem.value = new_addr + 1;
+	}
+    }
+}
+
 function startup()
 {
+    body = document.body;
     tick = document.getElementById("tick");
     swipe = document.getElementById("swipe");
     address_elem = document.getElementById("address");
@@ -176,16 +189,44 @@ function startup()
 
     let set_address = document.getElementById("set_address");
     set_address.addEventListener("click", function() {
-	let new_addr = parseInt(address_entry_elem.value);
-	if (new_addr!=null) { 
-	    ws.send(JSON.stringify({NewAddress:{address: new_addr, index: index}}))
-	    if (new_addr == 64) {
-		address_entry_elem.value = 1;
-	    } else {
-		address_entry_elem.value = new_addr + 1;
-	    }
-	}
+	do_set_address()
     });
+
+    let change_addresses = document.getElementById("change_addresses");
+    change_addresses.addEventListener("click", function() {
+	ws.send(JSON.stringify({ChangeAddresses:true}))
+    });
+
+    body.addEventListener("keydown", function(e) {
+	switch(e.code) {
+	case "ArrowLeft":
+	    e.preventDefault();
+	    step(-1)
+	    break
+	case "ArrowRight":
+	    e.preventDefault();
+	    step(1)
+	    break
+	case "ArrowUp":
+	    e.preventDefault();
+	    address_entry_elem.stepUp()
+	    break
+	case "ArrowDown":
+	    e.preventDefault();
+	    address_entry_elem.stepDown()
+	    break
+	case "Enter":
+	case "Space":
+	    e.preventDefault();
+	    do_set_address();
+	    break
+	}
+	console.log("Keydown"+e.code);
+    })
+
+    body.addEventListener("keyup", function(e) {
+	console.log("Key up");
+    })
 
     ws.onopen = (msg) => {
 	ws.send(JSON.stringify({RequestScanUpdate:true}))

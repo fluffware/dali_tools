@@ -13,42 +13,117 @@ use serde_derive::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::Duration;
 
-use dali::base::address::{Address, Short};
+use dali::base::address::{Address, Long, Short,BusAddress};
 use dali::base::status::GearStatus;
 use dali::defs::common::MASK;
 use dali::defs::gear::cmd;
 use dali::drivers::command_utils::{send_device_cmd, send_device_level};
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
-use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, /*PRIORITY_1, PRIORITY_5, SEND_TWICE*/};
+use dali::drivers::driver_utils::DaliDriverExt;
+use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, /*PRIORITY_5,*/ SEND_TWICE};
 use dali::httpd::{self, ServerConfig};
 //use dali::utils::filtered_vec::FilteredVec;
 use dali_tools as dali;
 
 type DynResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
-async fn get_long_address(driver: &mut dyn DaliDriver, addr: &Short) -> DynResult<u32> {
-    let low = match send_device_cmd(driver, addr, cmd::QUERY_RANDOM_ADDRESS_L, EXPECT_ANSWER).await
-    {
-        DaliSendResult::Answer(s) => s,
-        DaliSendResult::Timeout => return Err("Timeout".into()),
-        e => return Err(e.into()),
-    };
-    let mid = match send_device_cmd(driver, addr, cmd::QUERY_RANDOM_ADDRESS_M, EXPECT_ANSWER).await
-    {
-        DaliSendResult::Answer(s) => s,
-        DaliSendResult::Timeout => return Err("Timeout".into()),
-        e => return Err(e.into()),
-    };
+async fn set_search_addr(driver: &mut dyn DaliDriver, addr: Long) -> Result<u8, DaliSendResult> {
+    let res = driver.send_frame16(&[cmd::SEARCHADDRH, (addr >> 16 & 0xff) as u8], PRIORITY_1);
+    res.await.check_send()?;
 
-    let high = match send_device_cmd(driver, addr, cmd::QUERY_RANDOM_ADDRESS_H, EXPECT_ANSWER).await
-    {
-        DaliSendResult::Answer(s) => s,
-        DaliSendResult::Timeout => return Err("Timeout".into()),
-        e => return Err(e.into()),
-    };
+    let res = driver.send_frame16(&[cmd::SEARCHADDRM, (addr >> 8 & 0xff) as u8], PRIORITY_1);
+    res.await.check_send()?;
+    let res = driver.send_frame16(&[cmd::SEARCHADDRL, (addr & 0xff) as u8], PRIORITY_1);
+    res.await.check_send()?;
+    Ok(0)
+}
 
-    Ok(u32::from(high) << 16 | u32::from(mid) << 8 | u32::from(low))
+async fn query_long_addr(
+    driver: &mut dyn DaliDriver,
+    short_addr: Short,
+) -> Result<Long, DaliSendResult> {
+    let h = send_device_cmd(
+        driver,
+        &short_addr,
+        cmd::QUERY_RANDOM_ADDRESS_H,
+        EXPECT_ANSWER,
+    )
+    .await
+    .check_answer()?;
+    let m = send_device_cmd(
+        driver,
+        &short_addr,
+        cmd::QUERY_RANDOM_ADDRESS_M,
+        EXPECT_ANSWER,
+    )
+    .await
+    .check_answer()?;
+    let l = send_device_cmd(
+        driver,
+        &short_addr,
+        cmd::QUERY_RANDOM_ADDRESS_L,
+        EXPECT_ANSWER,
+    )
+    .await
+    .check_answer()?;
+    Ok((h as u32) << 16 | (m as u32) << 8 | (l as u32))
+}
+
+async fn program_short_address(
+    driver: &mut dyn DaliDriver,
+    long: Long,
+    short: Short,
+) -> Result<(), DaliSendResult> {
+    set_search_addr(driver, long).await?;
+    driver
+        .send_frame16(
+            &[cmd::PROGRAM_SHORT_ADDRESS, short.bus_address() | 1],
+            NO_FLAG,
+        )
+        .await
+        .check_send()?;
+    let a = driver
+        .send_frame16(&[cmd::QUERY_SHORT_ADDRESS, 0x00], EXPECT_ANSWER)
+        .await
+        .check_answer()?;
+    println!("Set {}, got {}", short, a>>1 + 1);
+    Ok(())
+}
+
+async fn swap_addr(
+    driver: &SyncDriver,
+    addr1: Short,
+    addr2: Short,
+) -> Result<(), DaliSendResult> {
+    let driver = &mut **driver.lock().await;
+    let long1 = match query_long_addr(driver, addr1).await {
+        Ok(a) => Some(a),
+        Err(DaliSendResult::Timeout) => None,
+        Err(e) => return Err(e),
+    };
+    println!("{}: 0x{:?}", addr1, long1);
+    let long2 = match query_long_addr(driver, addr2).await {
+        Ok(a) => Some(a),
+        Err(DaliSendResult::Timeout) => None,
+        Err(e) => return Err(e),
+    };
+    println!("{}: 0x{:?}", addr2, long2);
+    driver
+        .send_frame16(&[cmd::INITIALISE, cmd::INITIALISE_ALL], SEND_TWICE)
+        .await
+        .check_send()?;
+    if let Some(l) = long1 {
+        program_short_address(driver, l, addr2).await?;
+    }
+    if let Some(l) = long2 {
+        program_short_address(driver, l, addr1).await?;
+    }
+    driver
+        .send_frame16(&[cmd::TERMINATE, 0], NO_FLAG)
+        .await
+        .check_send()?;
+    Ok(())
 }
 
 #[derive(Copy, Clone)]
@@ -90,7 +165,7 @@ where
         };
         if let Some(status) = status {
             info!("{}: Status: {}\r\n", addr, status);
-            match get_long_address(driver, &Short::new(addr)).await {
+            match query_long_addr(driver, Short::new(addr)).await {
                 Ok(l) => {
                     info!("{}: Long: {:06x}\r\n", addr, l);
                     found(GearData {
@@ -236,6 +311,21 @@ async fn handle_commands(
             }
             send_scan_update(send, ctxt)?;
         }
+        DaliCommands::ChangeAddresses(_) => {
+	    let mut swaps = Vec::new();
+	    {
+		let mut gears = ctxt.gears.lock().unwrap();
+		for g in gears.iter_mut() {
+		    if let (Some(old_addr), Some(new_addr)) = (g.old_addr, g.new_addr) {
+			swaps.push((old_addr,new_addr));
+			g.old_addr = g.new_addr.take();
+		}
+		}
+	    }
+	    for swap in swaps {
+		swap_addr(driver, Short::new(swap.0), Short::new(swap.1)).await?;
+	    }
+        }
         DaliCommands::RequestGearList(_) => {
             let gears = ctxt.gears.lock().unwrap();
             for g in gears.iter() {
@@ -260,6 +350,7 @@ enum DaliCommands {
     RequestScanUpdate(bool),
     RequestGearList(bool),
     NewAddress { address: u8, index: u8 },
+    ChangeAddresses(bool),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -278,6 +369,18 @@ enum DaliReplies {
     GearRemoved {
         long_address: u32,
     },
+}
+
+fn gear_old_addr(ctxt: &IdentificationCtxt, index: usize) -> Option<Address> {
+    if let Some(&GearData {
+        old_addr: Some(addr),
+        ..
+    }) = ctxt.gears.lock().unwrap().get(index)
+    {
+        Some(Address::Short(Short::new(addr)))
+    } else {
+        None
+    }
 }
 
 async fn cmd_thread(
@@ -322,7 +425,7 @@ async fn cmd_thread(
                 }
             }
             _ = &mut start_blink => {
-                tick_blink.set(tokio::time::sleep(Duration::from_millis(300)).fuse());
+                tick_blink.set(tokio::time::sleep(Duration::from_millis(500)).fuse());
             }
             _ = &mut tick_blink => {
                 let mut ctxt = ctxt.lock().await;
@@ -358,36 +461,30 @@ async fn cmd_thread(
                 start_blink.set(Fuse::terminated());
                 tick_blink.set(Fuse::terminated());
                 let mut ctxt = ctxt.lock().await;
-                let addr = if let Some(&GearData{old_addr: Some(addr), ..}) =
-                    ctxt.gears.lock().unwrap().get(ctxt.current_gear) {
-                        Some(addr)
-                    } else {
-                        None
-                    };
                 if !ctxt.current_high {
-                    if let Some(addr) = addr {
+                    if let Some(addr) = gear_old_addr(&ctxt, ctxt.current_gear) {
                         if let Err(e) =
                             set_high_level(&driver,
                                            &mut *ctxt,
-                                           &Address::Short(Short::new(addr))).await {
+                                           &addr).await {
                                 error!("Failed to set high level: {}",e);
                             }
                     }
                 }
                 if ctxt.current_gear < ctxt.target_gear {
                     ctxt.current_gear += 1;
-                    if let Some(addr) = addr {
+                    if let Some(addr) = gear_old_addr(&ctxt, ctxt.current_gear) {
                         if let Err(e) =
                             set_high_level(&driver,
-                                           &mut *ctxt, &Address::Short(Short::new(addr))).await {
+                                           &mut *ctxt, &addr).await {
                             error!("Failed to set high level: {}",e);
                         }
                     }
                 } else {
-                    if let Some(addr) = addr {
+                    if let Some(addr) = gear_old_addr(&ctxt, ctxt.current_gear) {
                         if let Err(e) =
                             set_low_level(&driver,
-                                           &mut *ctxt, &Address::Short(Short::new(addr))).await {
+                                           &mut *ctxt, &addr).await {
                                 error!("Failed to set high level: {}",e);
                             }
                     }

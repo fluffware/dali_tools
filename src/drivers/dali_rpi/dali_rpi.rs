@@ -81,12 +81,12 @@ fn bytes_to_event(bytes: &[u8]) -> Option<DaliBusEvent> {
 async fn driver_thread(
     mut serial: SerialStream,
     mut recv: mpsc::Receiver<DALIreq>,
-    mut monitor: mpsc::Sender<DaliBusEvent>,
+    monitor: mpsc::Sender<DaliBusEvent>,
 ) -> Result<(), DriverError> {
     let mut req_timeout = None;
     let mut ser_rx_buf = [0u8; 16];
     let mut ser_rx_pos = 0;
-    let mut last_rx_time = Instant::now();
+    let last_rx_time = Instant::now();
     let mut next_seq = 1u8;
     let mut current_req = None;
     loop {
@@ -184,7 +184,7 @@ async fn driver_thread(
                             ser_rx_pos -= 8;
                         }
                     }
-                    Err(e) => {
+                    Err(_e) => {
 
                     }
                 }

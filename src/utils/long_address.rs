@@ -44,7 +44,7 @@ pub async fn set_search_addr(
     Ok(0)
 }
 
-pub async fn get_random_addr(
+pub async fn query_long_addr(
     driver: &mut dyn DaliDriver,
     addr: &Short,
 ) -> Result<Long, DaliSendResult> {

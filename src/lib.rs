@@ -18,6 +18,7 @@ pub mod utils {
     pub mod filtered_vec;
     pub mod long_address;
     pub mod memory_banks;
+    pub mod address_assignment;
 }
 
 pub mod drivers;

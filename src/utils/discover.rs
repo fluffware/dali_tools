@@ -294,7 +294,7 @@ async fn discover_async(
         //eprintln!("Addr: {}", a);
         let mut retry = 3u32;
         match loop {
-            match long_address::get_random_addr(d, &a).await {
+            match long_address::query_long_addr(d, &a).await {
                 Ok(l) => {
                     found_short[index] = Some(l);
                     break Ok(l);

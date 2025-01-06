@@ -1,7 +1,6 @@
 use dali::base::address::Short;
 use dali::drivers::driver::{DaliFrame, OpenError};
 use dali::drivers::send_flags::Flags as SendFlags;
-use dali::utils::device_info;
 use dali::utils::memory_banks;
 use dali_tools as dali;
 use tokio::time::Duration;

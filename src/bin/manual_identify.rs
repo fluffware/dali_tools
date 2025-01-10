@@ -13,31 +13,20 @@ use serde_derive::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::Duration;
 
-use dali::base::address::{Address, Long, Short,BusAddress};
+use dali::base::address::{Address, Long, Short};
 use dali::base::status::GearStatus;
 use dali::defs::common::MASK;
 use dali::defs::gear::cmd;
 use dali::drivers::command_utils::{send_device_cmd, send_device_level};
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
-use dali::drivers::driver_utils::DaliDriverExt;
-use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, /*PRIORITY_5,*/ SEND_TWICE};
+use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG};
 use dali::httpd::{self, ServerConfig};
+use dali::utils::address_assignment::program_short_addresses;
 //use dali::utils::filtered_vec::FilteredVec;
 use dali_tools as dali;
 
 type DynResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
-
-async fn set_search_addr(driver: &mut dyn DaliDriver, addr: Long) -> Result<u8, DaliSendResult> {
-    let res = driver.send_frame16(&[cmd::SEARCHADDRH, (addr >> 16 & 0xff) as u8], PRIORITY_1);
-    res.await.check_send()?;
-
-    let res = driver.send_frame16(&[cmd::SEARCHADDRM, (addr >> 8 & 0xff) as u8], PRIORITY_1);
-    res.await.check_send()?;
-    let res = driver.send_frame16(&[cmd::SEARCHADDRL, (addr & 0xff) as u8], PRIORITY_1);
-    res.await.check_send()?;
-    Ok(0)
-}
 
 async fn query_long_addr(
     driver: &mut dyn DaliDriver,
@@ -68,62 +57,6 @@ async fn query_long_addr(
     .await
     .check_answer()?;
     Ok((h as u32) << 16 | (m as u32) << 8 | (l as u32))
-}
-
-async fn program_short_address(
-    driver: &mut dyn DaliDriver,
-    long: Long,
-    short: Short,
-) -> Result<(), DaliSendResult> {
-    set_search_addr(driver, long).await?;
-    driver
-        .send_frame16(
-            &[cmd::PROGRAM_SHORT_ADDRESS, short.bus_address() | 1],
-            NO_FLAG,
-        )
-        .await
-        .check_send()?;
-    let a = driver
-        .send_frame16(&[cmd::QUERY_SHORT_ADDRESS, 0x00], EXPECT_ANSWER)
-        .await
-        .check_answer()?;
-    println!("Set {}, got {}", short, (a>>1)+1);
-    Ok(())
-}
-
-async fn swap_addr(
-    driver: &SyncDriver,
-    addr1: Short,
-    addr2: Short,
-) -> Result<(), DaliSendResult> {
-    let driver = &mut **driver.lock().await;
-    let long1 = match query_long_addr(driver, addr1).await {
-        Ok(a) => Some(a),
-        Err(DaliSendResult::Timeout) => None,
-        Err(e) => return Err(e),
-    };
-    println!("{}: 0x{:?}", addr1, long1);
-    let long2 = match query_long_addr(driver, addr2).await {
-        Ok(a) => Some(a),
-        Err(DaliSendResult::Timeout) => None,
-        Err(e) => return Err(e),
-    };
-    println!("{}: 0x{:?}", addr2, long2);
-    driver
-        .send_frame16(&[cmd::INITIALISE, cmd::INITIALISE_ALL], SEND_TWICE)
-        .await
-        .check_send()?;
-    if let Some(l) = long1 {
-        program_short_address(driver, l, addr2).await?;
-    }
-    if let Some(l) = long2 {
-        program_short_address(driver, l, addr1).await?;
-    }
-    driver
-        .send_frame16(&[cmd::TERMINATE, 0], NO_FLAG)
-        .await
-        .check_send()?;
-    Ok(())
 }
 
 #[derive(Copy, Clone)]
@@ -276,7 +209,9 @@ async fn handle_commands(
             }
             find(driver, &mut |gd| {
                 ctxt.gears.lock().unwrap().push(gd);
-                send_gear(send, &gd).unwrap();
+                if let Err(e) = send_gear(send, &gd) {
+		    error!("Failed to send gear data to app: {}", e);
+		}
             })
             .await?;
             ctxt.current_gear = 0;
@@ -312,19 +247,18 @@ async fn handle_commands(
             send_scan_update(send, ctxt)?;
         }
         DaliCommands::ChangeAddresses(_) => {
-	    let mut swaps = Vec::new();
-	    {
-		let mut gears = ctxt.gears.lock().unwrap();
-		for g in gears.iter_mut() {
-		    if let (Some(old_addr), Some(new_addr)) = (g.old_addr, g.new_addr) {
-			swaps.push((old_addr,new_addr));
-			g.old_addr = g.new_addr.take();
-		}
-		}
-	    }
-	    for swap in swaps {
-		swap_addr(driver, Short::new(swap.0), Short::new(swap.1)).await?;
-	    }
+            let driver = &mut **driver.lock().await;
+            let mut swaps = Vec::new();
+            {
+                let mut gears = ctxt.gears.lock().unwrap();
+                for g in gears.iter_mut() {
+                    if let (Some(old_addr), Some(new_addr)) = (g.old_addr, g.new_addr) {
+                        swaps.push((Short::new(old_addr), Short::new(new_addr)));
+                        g.old_addr = g.new_addr.take();
+                    }
+                }
+            }
+            program_short_addresses(driver, &swaps).await?;
         }
         DaliCommands::RequestGearList(_) => {
             let gears = ctxt.gears.lock().unwrap();

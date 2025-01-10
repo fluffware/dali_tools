@@ -118,6 +118,21 @@ impl std::cmp::PartialEq<Short> for Short {
     }
 }
 
+impl std::cmp::Eq for Short {}
+
+impl std::cmp::PartialOrd for Short
+{
+    fn partial_cmp(&self, other: &Short) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl std::cmp::Ord for Short {
+    fn cmp(&self, other: &Short) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
 impl BusAddress for Short {
     fn bus_address(&self) -> u8 {
         (self.0 - 1) << 1

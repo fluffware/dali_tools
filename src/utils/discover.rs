@@ -6,6 +6,7 @@ use crate::base::address::Long;
 use crate::base::address::Short;
 use crate::drivers::send_flags::{EXPECT_ANSWER, PRIORITY_1, SEND_TWICE};
 use crate::utils::long_address;
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -161,8 +162,11 @@ async fn find_devices_no_initialise(
 
     let mut low_multiple = None;
 
+    // Short addresses found so far, used to detect address collisions
+    let mut found_short = BTreeSet::new();
+
     let search_res: Result<u32, Box<dyn Error + Send + Sync>> = loop {
-        //println!("Searching {:06x} - {:06x}", low, high);
+        println!("Searching {:06x} - {:06x}", low, high);
         match find_device(
             driver,
             low,
@@ -195,8 +199,9 @@ async fn find_devices_no_initialise(
                             long: Some(addr),
                             short: short,
                             long_conflict: false,
-                            short_conflict: false,
+                            short_conflict: found_short.contains(&short),
                         });
+                        found_short.insert(short);
                         match send_blocking(tx, msg).await {
                             Ok(()) => {}
                             Err(e) => return Err(Box::new(e)),
@@ -380,6 +385,7 @@ async fn discover_thread(
         // Ignore any errors
         _ => {}
     }
+    drop(tx);
 }
 
 /// Find all devices on the bus.

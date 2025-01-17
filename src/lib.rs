@@ -31,6 +31,7 @@ pub mod defs {
         pub mod light_source;
         pub mod status;
     }
+    pub mod control;
 }
 
 #[cfg(feature = "httpd")]

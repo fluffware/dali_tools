@@ -1,6 +1,6 @@
 use dali::base::address::{Address::Broadcast, Short};
 use dali::defs::gear::cmd;
-use dali::drivers::command_utils::{send_device_cmd, send_set_dtr0};
+use dali::drivers::command_utils::send16;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, PRIORITY_5, SEND_TWICE};
@@ -84,7 +84,7 @@ fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration) {
 async fn identify(driver: &mut dyn DaliDriver) -> Result<(), Box<dyn Error>> {
     let mut next = tokio::time::Instant::now();
     for s in 0..10 {
-        send_device_cmd(driver, &Broadcast, cmd::GO_TO_SCENE_6 + s, PRIORITY_1)
+        send16::device_cmd(driver, &Broadcast, cmd::GO_TO_SCENE_6 + s, PRIORITY_1)
             .await
             .check_send()?;
         next += BIT_TIME;
@@ -99,11 +99,11 @@ async fn identify_setup(
     space: u8,
     mark: u8,
 ) -> Result<(), Box<dyn Error>> {
-    send_device_cmd(driver, &Broadcast, cmd::RECALL_MIN_LEVEL, NO_FLAG)
+    send16::device_cmd(driver, &Broadcast, cmd::RECALL_MIN_LEVEL, NO_FLAG)
         .await
         .check_send()?;
     for i in 0..64 {
-        match send_device_cmd(
+        match send16::device_cmd(
             driver,
             &Short::new(i + 1),
             cmd::QUERY_DEVICE_TYPE,
@@ -117,20 +117,20 @@ async fn identify_setup(
             DaliSendResult::Timeout => continue,
             e => return Err(Box::new(e)),
         }
-        send_set_dtr0(driver, space, PRIORITY_5).await;
+        send16::set_dtr0(driver, space, PRIORITY_5).await;
         for b in 0..10 {
             let cmd = cmd::SET_SCENE_6 + b;
             if (BIT_SEQ[i as usize] & (1 << b)) == 0 {
-                send_device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
+                send16::device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
                     .await
                     .check_send()?;
             }
         }
-        send_set_dtr0(driver, mark, PRIORITY_5).await;
+        send16::set_dtr0(driver, mark, PRIORITY_5).await;
         for b in 0..10 {
             let cmd = cmd::SET_SCENE_6 + b;
             if (BIT_SEQ[i as usize] & (1 << b)) != 0 {
-                send_device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
+                send16::device_cmd(driver, &Short::new(i + 1), cmd, SEND_TWICE)
                     .await
                     .check_send()?;
             }

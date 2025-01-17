@@ -2,7 +2,7 @@ use dali::base::address::BusAddress;
 use dali::base::address::Long;
 use dali::base::address::Short;
 use dali::defs::gear::cmd;
-use dali::drivers::command_utils::send_device_cmd;
+use dali::drivers::command_utils::send16;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::driver_utils::DaliDriverExt;
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, SEND_TWICE};
@@ -26,7 +26,7 @@ async fn query_long_addr(
     driver: &mut dyn DaliDriver,
     short_addr: Short,
 ) -> Result<Long, DaliSendResult> {
-    let h = send_device_cmd(
+    let h = send16::device_cmd(
         driver,
         &short_addr,
         cmd::QUERY_RANDOM_ADDRESS_H,
@@ -34,7 +34,7 @@ async fn query_long_addr(
     )
     .await
     .check_answer()?;
-    let m = send_device_cmd(
+    let m = send16::device_cmd(
         driver,
         &short_addr,
         cmd::QUERY_RANDOM_ADDRESS_M,
@@ -42,7 +42,7 @@ async fn query_long_addr(
     )
     .await
     .check_answer()?;
-    let l = send_device_cmd(
+    let l = send16::device_cmd(
         driver,
         &short_addr,
         cmd::QUERY_RANDOM_ADDRESS_L,

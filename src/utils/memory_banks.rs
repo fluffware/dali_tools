@@ -1,6 +1,6 @@
 use crate::base::address::Short;
 use crate::defs::gear::cmd;
-use crate::drivers::command_utils::send_device_cmd;
+use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG};
@@ -124,14 +124,14 @@ pub async fn read_range(
         .check_send()?;
     let mut data = Vec::new();
     for _ in 0..length {
-        match send_device_cmd(d, &addr, cmd::READ_MEMORY_LOCATION, EXPECT_ANSWER).await {
+        match send16::device_cmd(d, &addr, cmd::READ_MEMORY_LOCATION, EXPECT_ANSWER).await {
             DaliSendResult::Answer(d) => data.push(d),
             DaliSendResult::Timeout => break,
             e => return Err(Box::new(e)),
         }
     }
 
-    let dtr = send_device_cmd(d, &addr, cmd::QUERY_CONTENT_DTR0, EXPECT_ANSWER)
+    let dtr = send16::device_cmd(d, &addr, cmd::QUERY_CONTENT_DTR0, EXPECT_ANSWER)
         .await
         .check_answer()?;
     if length as usize == data.len() {

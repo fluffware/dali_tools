@@ -27,6 +27,12 @@ async fn main() {
                 .help("Address"),
         )
         .arg(
+            Arg::new("END_ADDR")
+                .required(false)
+                .value_parser(value_parser!(u8))
+                .help("End address"),
+        )
+        .arg(
             Arg::new("memory_banks")
                 .short('m')
                 .long("memory-banks")
@@ -35,9 +41,16 @@ async fn main() {
                 .default_missing_value("true")
                 .help("Read information from memory banks"),
         )
+	.arg(
+            Arg::new("control")
+                .short('c')
+                .long("control")
+		.action(clap::ArgAction::SetTrue)
+                .help("Read info from control devices"),
+        )
         .get_matches();
 
-    let addr: Short = match matches.get_one::<u8>("ADDR") {
+    let mut addr: Short = match matches.get_one::<u8>("ADDR") {
         Some(&x) if x >= 1 && x <= 64 => Short::new(x),
         Some(_) => {
             println!("Address out of range");
@@ -48,8 +61,21 @@ async fn main() {
             return;
         }
     };
+    let end_addr: Short = match matches.get_one::<u8>("END_ADDR") {
+        Some(&x) if x >= 1 && x <= 64 => Short::new(x),
+        Some(_) => {
+            println!("Address out of range");
+            return;
+        }
+        None => addr.clone(),
+    };
+    if end_addr < addr {
+        println!("End address must be greater or equal to start address");
+        return;
+    }
     let device_name = matches.get_one::<String>("DEVICE").unwrap();
     let read_memory = *matches.get_one::<bool>("memory_banks").unwrap();
+    let control_device = *matches.get_one::<bool>("control").unwrap();
     let mut driver = match dali::drivers::open(device_name) {
         Ok(d) => d,
         Err(e) => {
@@ -64,21 +90,41 @@ async fn main() {
         }
     };
 
-    let info = match device_info::read_device_info(&mut *driver, addr).await {
-        Ok(i) => i,
-        Err(e) => {
-            println!("Failed to read device info: {}", e);
-            return;
-        }
-    };
-    println!("{}", info);
-    if read_memory {
-        match memory_banks::read_bank_0(&mut *driver, addr, 0, 0, 0x18).await {
-            Ok(data) => println!("{}", data),
-            Err(e) => {
-                println!("Failed to read memory banks: {}", e);
-                return;
+    loop {
+        if control_device {
+	    let info = match device_info::read_control_info(&mut *driver, addr).await {
+                Ok(i) => i,
+                Err(e) => {
+                    println!("Failed to read device info: {}", e);
+                    return;
+                }
+            };
+            println!("{}", info);
+        } else {
+            let info = match device_info::read_gear_info(&mut *driver, addr).await {
+                Ok(i) => i,
+                Err(e) => {
+                    println!("Failed to read device info: {}", e);
+                    return;
+                }
+            };
+            println!("{}", info);
+            if read_memory {
+                match memory_banks::read_bank_0(&mut *driver, addr, 0, 0, 0x18).await {
+                    Ok(data) => println!("{}", data),
+                    Err(e) => {
+                        println!("Failed to read memory banks: {}", e);
+                        return;
+                    }
+                }
             }
         }
+        if addr == end_addr {
+            break;
+        }
+        addr = match addr.try_add(1) {
+            Ok(a) => a,
+            Err(_) => break,
+        };
     }
 }

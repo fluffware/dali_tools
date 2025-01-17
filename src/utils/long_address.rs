@@ -1,7 +1,7 @@
 use crate::base::address::Long;
 use crate::base::address::Short;
 use crate::defs::gear::cmd;
-use crate::drivers::command_utils::send_device_cmd;
+use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::{EXPECT_ANSWER, PRIORITY_1};
@@ -48,7 +48,7 @@ pub async fn query_long_addr(
     driver: &mut dyn DaliDriver,
     addr: &Short,
 ) -> Result<Long, DaliSendResult> {
-    let res = send_device_cmd(
+    let res = send16::device_cmd(
         driver,
         addr,
         cmd::QUERY_RANDOM_ADDRESS_H,
@@ -56,7 +56,7 @@ pub async fn query_long_addr(
     );
     let h = res.await.check_answer()?;
 
-    let res = send_device_cmd(
+    let res = send16::device_cmd(
         driver,
         addr,
         cmd::QUERY_RANDOM_ADDRESS_M,
@@ -64,7 +64,7 @@ pub async fn query_long_addr(
     );
     let m = res.await.check_answer()?;
 
-    let res = send_device_cmd(
+    let res = send16::device_cmd(
         driver,
         addr,
         cmd::QUERY_RANDOM_ADDRESS_L,

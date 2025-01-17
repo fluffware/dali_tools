@@ -2,13 +2,14 @@ use crate::base::address::{BusAddress, Long, Short};
 use crate::base::device_type::DeviceType;
 use crate::base::status::GearStatus;
 use crate::defs::common::MASK;
+use crate::defs::control::cmd::{self as ccmd, InstanceByte, OpcodeByte};
 use crate::defs::gear::cmd;
-use crate::drivers::command_utils::send_device_cmd;
+use crate::drivers::command_utils::{send16, send24};
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::send_flags::EXPECT_ANSWER;
 use std::fmt;
 
-pub struct DeviceInfo {
+pub struct GearInfo {
     random_addr: Option<Long>,
     short_addr: Option<Short>,
     version: Option<u8>,
@@ -23,15 +24,15 @@ pub struct DeviceInfo {
     min_level: Option<u8>,
     max_level: Option<u8>,
 
-    powere_on_level: Option<u8>,
+    power_on_level: Option<u8>,
     failure_level: Option<u8>,
     fade: Option<u8>,
     extended_fade_time: Option<u8>,
 }
 
-impl DeviceInfo {
-    fn new() -> DeviceInfo {
-        DeviceInfo {
+impl GearInfo {
+    fn new() -> GearInfo {
+        GearInfo {
             random_addr: None,
             short_addr: None,
             version: None,
@@ -46,7 +47,7 @@ impl DeviceInfo {
             min_level: None,
             max_level: None,
 
-            powere_on_level: None,
+            power_on_level: None,
             failure_level: None,
             fade: None,
             extended_fade_time: None,
@@ -90,7 +91,7 @@ pub fn fmt_scenes(f: &mut fmt::Formatter<'_>, scenes: &[u8; 16]) -> fmt::Result 
     f.write_str(&str.join(", "))
 }
 
-impl fmt::Display for DeviceInfo {
+impl fmt::Display for GearInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(long) = self.random_addr {
             writeln!(f, "Random address: {} (0x{:06x})", long, long)?
@@ -143,7 +144,7 @@ impl fmt::Display for DeviceInfo {
         if let Some(v) = &self.max_level {
             writeln!(f, "Maximum level: {}", v)?;
         }
-        if let Some(v) = &self.powere_on_level {
+        if let Some(v) = &self.power_on_level {
             writeln!(f, "Power on level: {}", v)?;
         }
         if let Some(v) = &self.failure_level {
@@ -219,27 +220,27 @@ async fn send_query(
     addr: Short,
     cmd: u8,
 ) -> Result<Option<u8>, DaliSendResult> {
-    match send_device_cmd(d, &addr, cmd, EXPECT_ANSWER).await {
+    match send16::device_cmd(d, &addr, cmd, EXPECT_ANSWER).await {
         DaliSendResult::Answer(s) => Ok(Some(s)),
         DaliSendResult::Timeout => Ok(None),
         e => return Err(e),
     }
 }
 
-pub async fn read_device_info(
+pub async fn read_gear_info(
     d: &mut dyn DaliDriver,
     addr: Short,
-) -> Result<DeviceInfo, DaliSendResult> {
-    let mut info: DeviceInfo = DeviceInfo::new();
+) -> Result<GearInfo, DaliSendResult> {
+    let mut info: GearInfo = GearInfo::new();
     info.short_addr = Some(addr);
-    info.status = match send_device_cmd(d, &addr, cmd::QUERY_STATUS, EXPECT_ANSWER).await {
+    info.status = match send16::device_cmd(d, &addr, cmd::QUERY_STATUS, EXPECT_ANSWER).await {
         DaliSendResult::Answer(s) => Some(GearStatus::new(s)),
         DaliSendResult::Timeout => None,
         e => return Err(e),
     };
-    match send_device_cmd(d, &addr, cmd::QUERY_DEVICE_TYPE, EXPECT_ANSWER).await {
+    match send16::device_cmd(d, &addr, cmd::QUERY_DEVICE_TYPE, EXPECT_ANSWER).await {
         DaliSendResult::Answer(MASK) => loop {
-            match send_device_cmd(d, &addr, cmd::QUERY_NEXT_DEVICE_TYPE, EXPECT_ANSWER).await {
+            match send16::device_cmd(d, &addr, cmd::QUERY_NEXT_DEVICE_TYPE, EXPECT_ANSWER).await {
                 DaliSendResult::Answer(MASK) => break,
                 DaliSendResult::Answer(t) => info.device_types.push(DeviceType::new(t)),
                 DaliSendResult::Timeout => break,
@@ -252,8 +253,8 @@ pub async fn read_device_info(
     };
 
     info.groups = match (
-        send_device_cmd(d, &addr, cmd::QUERY_GROUPS_0_7, EXPECT_ANSWER).await,
-        send_device_cmd(d, &addr, cmd::QUERY_GROUPS_8_15, EXPECT_ANSWER).await,
+        send16::device_cmd(d, &addr, cmd::QUERY_GROUPS_0_7, EXPECT_ANSWER).await,
+        send16::device_cmd(d, &addr, cmd::QUERY_GROUPS_8_15, EXPECT_ANSWER).await,
     ) {
         (DaliSendResult::Answer(l), DaliSendResult::Answer(h)) => {
             Some(((h as u16) << 8) | (l as u16))
@@ -267,7 +268,7 @@ pub async fn read_device_info(
     let mut scenes = [MASK; 16];
     let mut scene_count = 0;
     for i in 0..16 {
-        scenes[i] = match send_device_cmd(
+        scenes[i] = match send16::device_cmd(
             d,
             &addr,
             cmd::QUERY_SCENE_LEVEL_0 + (i as u8),
@@ -291,17 +292,99 @@ pub async fn read_device_info(
     info.min_level = send_query(d, addr, cmd::QUERY_MIN_LEVEL).await?;
     info.max_level = send_query(d, addr, cmd::QUERY_MAX_LEVEL).await?;
     info.failure_level = send_query(d, addr, cmd::QUERY_SYSTEM_FAILURE_LEVEL).await?;
-    info.powere_on_level = send_query(d, addr, cmd::QUERY_POWER_ON_LEVEL).await?;
+    info.power_on_level = send_query(d, addr, cmd::QUERY_POWER_ON_LEVEL).await?;
     info.operating_mode = send_query(d, addr, cmd::QUERY_OPERATING_MODE).await?;
     info.version = send_query(d, addr, cmd::QUERY_VERSION_NUMBER).await?;
     info.fade = send_query(d, addr, cmd::QUERY_FADE).await?;
     info.extended_fade_time = send_query(d, addr, cmd::QUERY_EXTENDED_FADE_TIME).await?;
 
-    match send_device_cmd(d, &addr, cmd::QUERY_LIGHT_SOURCE_TYPE, EXPECT_ANSWER).await {
+    match send16::device_cmd(d, &addr, cmd::QUERY_LIGHT_SOURCE_TYPE, EXPECT_ANSWER).await {
         DaliSendResult::Answer(s) => info.light_source_types.push(s),
         DaliSendResult::Timeout => {}
         e => return Err(e),
     };
 
+    Ok(info)
+}
+pub struct Instance
+{
+    instance_type: u8,
+    resolution: u8,
+    error: u8,
+    status: u8,
+    event_priority: u8,
+    instance_groups: [u8;3], // Primary, 1, 2
+    event_scheme: u8,
+    input_value: u32,
+    feature_types: Vec<u8>,
+    event_filter: u32,
+    
+}
+pub struct ControlInfo {
+    random_addr: Long,
+    short_addr: Short,
+    version: u8,
+    device_status: u8,
+    controller_error: u8,
+    device_error: u8,
+    operation_mode: u8,
+    manufacturer_specific_mode: u8,
+    device_groups: u32,
+    device_capabilities: u32,
+    instances: Vec<Instance>
+	
+}
+
+impl ControlInfo {
+    fn new() -> ControlInfo {
+        ControlInfo {
+            random_addr: 0,
+            short_addr: Short::new(1),
+            version: 0,
+	    device_status: 0,
+	    controller_error: 0,
+	    device_error: 0,
+	    operation_mode: 0,
+	    manufacturer_specific_mode: 0,
+	    device_groups: 0,
+	    device_capabilities: 0,
+	    instances: Vec::new()
+        }
+    }
+}
+impl fmt::Display for ControlInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Random address: {0} (0x{0:06x})", self.random_addr)?;
+        writeln!(
+            f,
+            "Short address: {} (0x{:02x})",
+            self.short_addr,
+            self.short_addr.bus_address()
+        )?;
+	
+	writeln!(f, "Version: {}.{}", self.version >> 2, self.version & 3)?;
+	
+	Ok(())
+    }
+}
+
+async fn send_query24(
+    d: &mut dyn DaliDriver,
+    addr: Short,
+    cmd: (InstanceByte, OpcodeByte),
+) -> Result<Option<u8>, DaliSendResult> {
+    match send24::device_cmd(d, &addr, cmd, EXPECT_ANSWER).await {
+        DaliSendResult::Answer(s) => Ok(Some(s)),
+        DaliSendResult::Timeout => Ok(None),
+        e => return Err(e),
+    }
+}
+pub async fn read_control_info(
+    d: &mut dyn DaliDriver,
+    addr: Short,
+) -> Result<ControlInfo, DaliSendResult> {
+    let mut info: ControlInfo = ControlInfo::new();
+    info.short_addr = addr;
+    info.version = send_query24(d, addr, ccmd::QUERY_VERSION_NUMBER).await?.unwrap_or(0);
     Ok(info)
 }

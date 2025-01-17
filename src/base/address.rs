@@ -88,6 +88,15 @@ impl Short {
         assert!(a >= 1 && a <= 64);
         Short { 0: a }
     }
+
+    pub fn try_add(&self, add: i8) -> Result<Short, AddressError> {
+	let a = (self.0 as i8 + add) as u8;
+	if a >= 1 && a <= 64 {
+            Ok(Short { 0: a })
+	} else {
+	    Err(AddressError::InvalidAddress)
+	}
+    }
 }
 
 impl std::convert::TryFrom<i32> for Short {

@@ -34,5 +34,7 @@ pub mod defs {
     pub mod control;
 }
 
+pub mod common;
+
 #[cfg(feature = "httpd")]
 pub mod httpd;

@@ -1,5 +1,5 @@
 use dali::base::address::{Address::Broadcast, Short};
-use dali::defs::gear::cmd;
+use dali::gear::cmd_defs as cmd;
 use dali::drivers::command_utils::send16;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};

@@ -1,4 +1,4 @@
-use super::super::common::MASK;
+use super::super::common::defs::MASK;
 
 pub const FLORESCENT: u8 = 0;
 pub const HID: u8 = 2;

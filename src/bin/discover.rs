@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
-use dali::defs::gear::cmd;
+use dali::gear::cmd_defs as cmd;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver_utils::DaliDriverExt;
 use dali::drivers::send_flags::SEND_TWICE;

@@ -2,7 +2,7 @@ use super::driver::{DaliDriver, DaliSendResult};
 use super::driver_utils::DaliDriverExt;
 use super::send_flags::Flags;
 use crate::base::address::BusAddress;
-use crate::defs::gear::cmd;
+use crate::gear::cmd_defs as cmd;
 use crate::utils::dyn_future::DynFuture;
 
 pub mod send16 {
@@ -80,7 +80,7 @@ pub mod send16 {
 
 pub mod send24 {
     use super::*;
-    use crate::defs::control::cmd::{InstanceByte, OpcodeByte};
+    use crate::control::cmd_defs::{InstanceByte, OpcodeByte};
     /// Send addressed DALI commands
     ///
     /// # Arguments

@@ -25,8 +25,8 @@ use tokio::time::Duration;
 
 use dali::base::address::{Address, Long, Short};
 use dali::base::status::GearStatus;
-use dali::defs::common::MASK;
-use dali::defs::gear::cmd;
+use dali::common::defs::MASK;
+use dali::gear::cmd_defs as cmd;
 use dali::drivers::command_utils::send16;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};

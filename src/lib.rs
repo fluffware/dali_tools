@@ -23,18 +23,12 @@ pub mod utils {
 
 pub mod drivers;
 
-pub mod defs {
-    pub mod common;
-    pub mod gear {
-        pub mod cmd;
-        pub mod device_type;
-        pub mod light_source;
-        pub mod status;
-    }
-    pub mod control;
-}
-
 pub mod common;
+
+pub mod gear;
+pub mod control;
+
+
 
 #[cfg(feature = "httpd")]
 pub mod httpd;

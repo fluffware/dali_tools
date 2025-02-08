@@ -1,4 +1,4 @@
-use crate::defs::gear::cmd;
+use crate::gear::cmd_defs as cmd;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
 

@@ -1,4 +1,4 @@
-use crate::defs::gear::status as flag;
+use crate::gear::status as flag;
 use std::fmt;
 
 pub struct GearStatus(u8);

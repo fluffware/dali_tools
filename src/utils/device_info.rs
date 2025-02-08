@@ -1,9 +1,9 @@
 use crate::base::address::{BusAddress, Long, Short};
 use crate::base::device_type::DeviceType;
 use crate::base::status::GearStatus;
-use crate::defs::common::MASK;
-use crate::defs::control::cmd::{self as ccmd, InstanceByte, OpcodeByte};
-use crate::defs::gear::cmd;
+use crate::common::defs::MASK;
+use crate::control::cmd_defs::{self as ccmd, InstanceByte, OpcodeByte};
+use crate::gear::cmd_defs as cmd;
 use crate::drivers::command_utils::{send16, send24};
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::send_flags::EXPECT_ANSWER;

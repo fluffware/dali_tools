@@ -1,4 +1,4 @@
-use crate::defs::gear::device_type as types;
+use crate::gear::device_type as types;
 use std::fmt;
 
 pub struct DeviceType(u8);

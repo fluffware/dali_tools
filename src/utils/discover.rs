@@ -2,8 +2,8 @@ use crate::gear::cmd_defs as cmd;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
 
-use crate::base::address::Long;
-use crate::base::address::Short;
+use crate::common::address::Long;
+use crate::common::address::Short;
 use crate::drivers::send_flags::{EXPECT_ANSWER, PRIORITY_1, SEND_TWICE};
 use crate::utils::long_address;
 use std::collections::BTreeSet;

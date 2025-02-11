@@ -1,7 +1,7 @@
 use super::driver::{DaliDriver, DaliSendResult};
 use super::driver_utils::DaliDriverExt;
 use super::send_flags::Flags;
-use crate::base::address::BusAddress;
+use crate::common::address::BusAddress;
 use crate::gear::cmd_defs as cmd;
 use crate::utils::dyn_future::DynFuture;
 
@@ -78,21 +78,4 @@ pub mod send16 {
     }
 }
 
-pub mod send24 {
-    use super::*;
-    use crate::control::cmd_defs::{InstanceByte, OpcodeByte};
-    /// Send addressed DALI commands
-    ///
-    /// # Arguments
-    /// * `addr` - Destination address of command
-    /// * `cmd` - Second and third byte of command
-    /// * `flags` - Options for transaction
-    pub fn device_cmd<'driver>(
-        driver: &'driver mut dyn DaliDriver,
-        addr: &dyn BusAddress,
-        cmd: (InstanceByte, OpcodeByte),
-        flags: Flags,
-    ) -> DynFuture<'driver, DaliSendResult> {
-        driver.send_frame24(&[addr.bus_address() | 1, cmd.0.into(), cmd.1.into()], flags)
-    }
-}
+

@@ -1,11 +1,10 @@
-use dali::base::address::BusAddress;
-use dali::base::address::Long;
-use dali::base::address::Short;
-use dali::gear::cmd_defs as cmd;
+use dali::common::address::DisplayValue;
+use dali::common::address::{BusAddress, Long, Short};
 use dali::drivers::command_utils::send16;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::driver_utils::DaliDriverExt;
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, SEND_TWICE};
+use dali::gear::cmd_defs as cmd;
 use dali_tools as dali;
 
 extern crate clap;
@@ -124,11 +123,13 @@ async fn main() {
         .get_matches();
 
     let addr1 = match matches.try_get_one::<u8>("ADDR1") {
-        Ok(Some(&x)) if x >= 1 && x <= 64 => Short::new(x),
-        Ok(Some(_)) => {
-            println!("First address out of range");
-            return;
-        }
+        Ok(Some(&x)) => match Short::from_display_value(x) {
+            Ok(a) => a,
+            Err(_) => {
+                println!("First address out of range");
+                return;
+            }
+        },
         Ok(None) => {
             println!("First address missing");
             return;
@@ -140,11 +141,13 @@ async fn main() {
     };
 
     let addr2 = match matches.try_get_one::<u8>("ADDR2") {
-        Ok(Some(&x)) if x >= 1 && x <= 64 => Short::new(x),
-        Ok(Some(_)) => {
-            println!("Second address out of range");
-            return;
-        }
+        Ok(Some(&x)) => match Short::from_display_value(x) {
+            Ok(a) => a,
+            Err(_) => {
+                println!("FirstSecond address out of range");
+                return;
+            }
+        },
         Ok(None) => {
             println!("Second address missing");
             return;

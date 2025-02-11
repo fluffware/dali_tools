@@ -45,6 +45,14 @@ impl DaliSendResult {
             e => Err(e),
         }
     }
+    
+    pub fn check_yes_no(self) -> Result<bool, DaliSendResult> {
+        match self {
+            DaliSendResult::Answer(255) => Ok(true),
+            DaliSendResult::Timeout => Ok(false),
+            e => Err(e),
+        }
+    }
 }
 
 #[derive(Debug)]

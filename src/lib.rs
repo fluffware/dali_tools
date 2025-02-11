@@ -4,11 +4,6 @@ extern crate tokio;
 extern crate lazy_static;
 pub mod error;
 
-pub mod base {
-    pub mod address;
-    pub mod device_type;
-    pub mod status;
-}
 
 pub mod utils {
     pub mod decode;

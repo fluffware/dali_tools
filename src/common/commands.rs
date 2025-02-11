@@ -1,27 +1,28 @@
+use core::future::Future;
 // Commands that are common for gears, app controllers and input devices
 
-trait Commands {
+pub trait Commands {
     type Address;
     type Short;
     type Error;
-    async fn initialize(device: u8) -> Result<(), Self::Error>;
-    async fn terminate() -> Result<(), Self::Error>;
-    async fn randomize() -> Result<(), Self::Error>;
-    async fn compare() -> Result<(), Self::Error>;
-    async fn withdraw() -> Result<(), Self::Error>;
-    async fn searchaddr_h(h: u8) -> Result<(), Self::Error>;
-    async fn searchaddr_m(m: u8) -> Result<(), Self::Error>;
-    async fn searchaddr_l(l: u8) -> Result<(), Self::Error>;
-    async fn program_short_address(addr: Self::Short) -> Result<(), Self::Error>;
-    async fn verify_short_address(add: Self::Short) -> Result<bool, Self::Error>;
-    async fn query_short_address(addr: Self::Short) -> Result<Self::Short, Self::Error>;
-    async fn dtr0(data: u8) -> Result<(), Self::Error>;
-    async fn dtr1(data: u8) -> Result<(), Self::Error>;
-    async fn dtr2(data: u8) -> Result<(), Self::Error>;
-    async fn write_memory_location(data: u8) -> Result<u8, Self::Error>;
-    async fn write_memory_location_no_reply(data: u8) -> Result<(), Self::Error>;
+     fn initialize(&mut self, device: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    fn terminate(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn randomize(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn compare(&mut self) -> impl Future<Output = Result<bool, Self::Error>> + Send;
+     fn withdraw(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn searchaddr_h(&mut self, h: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn searchaddr_m(&mut self, m: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn searchaddr_l(&mut self, l: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn program_short_address(&mut self, addr: Self::Short) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn verify_short_address(&mut self, add: Self::Short) -> impl Future<Output = Result<bool, Self::Error>> + Send;
+     fn query_short_address(&mut self) -> impl Future<Output = Result<Self::Short, Self::Error>> + Send;
+     fn dtr0(&mut self, data: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn dtr1(&mut self, data: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn dtr2(&mut self, data: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+     fn write_memory_location(&mut self, data: u8) -> impl Future<Output = Result<u8, Self::Error>> + Send;
+     fn write_memory_location_no_reply(&mut self, data: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    async fn query_random_address() -> Result<u32, Self::Error>;
-    async fn read_memory_location() -> Result<u8, Self::Error>;
-    async fn identify_device() -> Result<(), Self::Error>;
+     fn query_random_address(&mut self, device: Self::Address) -> impl Future<Output = Result<u32, Self::Error>> + Send;
+     fn read_memory_location(&mut self, device: Self::Address) -> impl Future<Output = Result<u8, Self::Error>> + Send;
+     fn identify_device(&mut self, device: Self::Address) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }

@@ -4,6 +4,14 @@ body {
     height:100vh;
     font-size: 50px;
 }
+
+h1 {
+    margin: 0;
+}
+p {
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
 #top {
     background:red;
     height: 50%;
@@ -30,6 +38,6 @@ body {
      font-size: 50px;
 }
 
-#find_all, #set_address, #change_addresses {
+#find_all, #set_address, #change_addresses, #sort {
     font-size: 50px;
 }

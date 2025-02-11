@@ -1,5 +1,5 @@
-use crate::base::address::Long;
-use crate::base::address::Short;
+use crate::common::address::Long;
+use crate::common::address::Short;
 use crate::gear::cmd_defs as cmd;
 use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};

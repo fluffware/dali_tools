@@ -1,9 +1,10 @@
-use dali::base::address::{Address::Broadcast, Short};
-use dali::gear::cmd_defs as cmd;
+use dali::common::address::Short;
 use dali::drivers::command_utils::send16;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, PRIORITY_1, PRIORITY_5, SEND_TWICE};
+use dali::gear::address::Address;
+use dali::gear::cmd_defs as cmd;
 use dali_tools as dali;
 use std::error::Error;
 extern crate clap;
@@ -84,7 +85,7 @@ fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration) {
 async fn identify(driver: &mut dyn DaliDriver) -> Result<(), Box<dyn Error>> {
     let mut next = tokio::time::Instant::now();
     for s in 0..10 {
-        send16::device_cmd(driver, &Broadcast, cmd::GO_TO_SCENE_6 + s, PRIORITY_1)
+        send16::device_cmd(driver, &Address::Broadcast, cmd::GO_TO_SCENE_6 + s, PRIORITY_1)
             .await
             .check_send()?;
         next += BIT_TIME;
@@ -99,7 +100,7 @@ async fn identify_setup(
     space: u8,
     mark: u8,
 ) -> Result<(), Box<dyn Error>> {
-    send16::device_cmd(driver, &Broadcast, cmd::RECALL_MIN_LEVEL, NO_FLAG)
+    send16::device_cmd(driver, &Address::Broadcast, cmd::RECALL_MIN_LEVEL, NO_FLAG)
         .await
         .check_send()?;
     for i in 0..64 {

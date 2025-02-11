@@ -14,6 +14,7 @@ let tps_current = 0;
 address_elem = null;
 index_elem = null;
 max_index_elem = null;
+wait_elem = null;
 
 let address = 0;
 let index = 0;
@@ -26,6 +27,7 @@ const SCAN_ADDRESS = 1;
 const FIND_ALL = 2;
 const NEW_ADDRESS = 3;
 const CHANGE_ADDRESSES = 4;
+const SORT = 5;
 
 let executing = {}
 function send_cmd(cmd, args = {}) {
@@ -52,11 +54,15 @@ function send_cmd(cmd, args = {}) {
 	})
 }
 
-function request_status(cmd, args = {}) {
+function request_status() {
     fetch("/dyn/cmd_status")
 	.then(response => {
 	    if (response.status == 200) {
 		response.json().then(data => {
+		    if (wait_elem) {
+			wait_elem.style.visibility = data.cmd != 0 ? "visible" : "hidden";
+		    }
+		    if (data.cmd != 0) request_status()
 		    console.log(data)
 		})
 	    } else {
@@ -103,7 +109,7 @@ function handle_reply(reply)
     max_index_elem.innerText = max_index + 1;
     new_address_elem.innerText = 
 	reply.new_address == MASK 
-	? "-":reply.new_address;
+	? "-":(reply.new_address+1);
 }
 
 function start_tick(tps)
@@ -247,10 +253,11 @@ function start_swipe(x,y)
 
 
 function do_set_address() {
-    let new_addr = parseInt(address_entry_elem.value);
+    let new_addr = parseInt(address_entry_elem.value) - 1;
     if (new_addr!=null) {
 	send_cmd(NEW_ADDRESS, {address: new_addr, index: index})
-	if (new_addr == 64) {
+	new_addr++;
+	if (new_addr >= 64) {
 	    address_entry_elem.value = 1;
 	} else {
 	    address_entry_elem.value = new_addr + 1;
@@ -269,6 +276,7 @@ function startup()
     index_elem = document.getElementById("index");
     max_index_elem = document.getElementById("max_index");
     address_entry_elem = document.getElementById("address_entry");
+    wait_elem = document.getElementById("wait");
     swipe.addEventListener("click", function (event) {
 	event.preventDefault();
     })
@@ -336,6 +344,11 @@ function startup()
     let change_addresses = document.getElementById("change_addresses");
     change_addresses.addEventListener("click", function() {
 	send_cmd(CHANGE_ADDRESSES)
+    });
+    
+    let sort = document.getElementById("sort");
+    sort.addEventListener("click", function() {
+	send_cmd(SORT)
     });
 
     body.addEventListener("keydown", function(e) {

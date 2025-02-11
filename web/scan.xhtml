@@ -12,12 +12,13 @@
     </script>
   </head>
   <body onload="startup()"><div id="top">
-      <audio id="tick" src="tick.wav" preload="auto"/>
       <h1>Scan DALI gears</h1>
+      <img id="wait" src="wait_50x50.webp" autoplay="true"/>
       <p>Index: <span id="index"/>/<span id="max_index"/></p>
       <p id="address_map">Address: <span id="address"/> → <span id="new_address"/> <input id="address_entry" type="number" min="1" max="64"  size="4" value="1"/> <button id ="set_address">Set</button></p>
       <button id="find_all">Find all</button>
-      <button id="change_addresses">Change addresses</button>
+      <button id="change_addresses">Change<br/>addresses</button>
+      <button id="sort">Sort</button>
     </div><div id="low_part">
       <canvas id="swipe" /></div>
   </body>

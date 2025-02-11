@@ -1,12 +1,14 @@
-use crate::base::address::{BusAddress, Long, Short};
-use crate::base::device_type::DeviceType;
-use crate::base::status::GearStatus;
+use crate::common::address::{BusAddress, Long, Short};
 use crate::common::defs::MASK;
-use crate::control::cmd_defs::{self as ccmd, InstanceByte, OpcodeByte};
-use crate::gear::cmd_defs as cmd;
-use crate::drivers::command_utils::{send16, send24};
+use crate::control::cmd_defs::Command;
+use crate::control::cmd_defs::{self as ccmd};
+use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
+use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::EXPECT_ANSWER;
+use crate::gear::cmd_defs as cmd;
+use crate::gear::device_type::DeviceType;
+use crate::gear::status::GearStatus;
 use std::fmt;
 
 pub struct GearInfo {
@@ -306,19 +308,17 @@ pub async fn read_gear_info(
 
     Ok(info)
 }
-pub struct Instance
-{
+pub struct Instance {
     instance_type: u8,
     resolution: u8,
     error: u8,
     status: u8,
     event_priority: u8,
-    instance_groups: [u8;3], // Primary, 1, 2
+    instance_groups: [u8; 3], // Primary, 1, 2
     event_scheme: u8,
     input_value: u32,
     feature_types: Vec<u8>,
     event_filter: u32,
-    
 }
 pub struct ControlInfo {
     random_addr: Long,
@@ -331,8 +331,7 @@ pub struct ControlInfo {
     manufacturer_specific_mode: u8,
     device_groups: u32,
     device_capabilities: u32,
-    instances: Vec<Instance>
-	
+    instances: Vec<Instance>,
 }
 
 impl ControlInfo {
@@ -341,14 +340,14 @@ impl ControlInfo {
             random_addr: 0,
             short_addr: Short::new(1),
             version: 0,
-	    device_status: 0,
-	    controller_error: 0,
-	    device_error: 0,
-	    operation_mode: 0,
-	    manufacturer_specific_mode: 0,
-	    device_groups: 0,
-	    device_capabilities: 0,
-	    instances: Vec::new()
+            device_status: 0,
+            controller_error: 0,
+            device_error: 0,
+            operation_mode: 0,
+            manufacturer_specific_mode: 0,
+            device_groups: 0,
+            device_capabilities: 0,
+            instances: Vec::new(),
         }
     }
 }
@@ -361,19 +360,18 @@ impl fmt::Display for ControlInfo {
             self.short_addr,
             self.short_addr.bus_address()
         )?;
-	
-	writeln!(f, "Version: {}.{}", self.version >> 2, self.version & 3)?;
-	
-	Ok(())
+
+        writeln!(f, "Version: {}.{}", self.version >> 2, self.version & 3)?;
+
+        Ok(())
     }
 }
 
 async fn send_query24(
     d: &mut dyn DaliDriver,
-    addr: Short,
-    cmd: (InstanceByte, OpcodeByte),
+    cmd: Command<true, false>,
 ) -> Result<Option<u8>, DaliSendResult> {
-    match send24::device_cmd(d, &addr, cmd, EXPECT_ANSWER).await {
+    match d.send_frame24(&cmd.0, EXPECT_ANSWER).await {
         DaliSendResult::Answer(s) => Ok(Some(s)),
         DaliSendResult::Timeout => Ok(None),
         e => return Err(e),
@@ -385,6 +383,8 @@ pub async fn read_control_info(
 ) -> Result<ControlInfo, DaliSendResult> {
     let mut info: ControlInfo = ControlInfo::new();
     info.short_addr = addr;
-    info.version = send_query24(d, addr, ccmd::QUERY_VERSION_NUMBER).await?.unwrap_or(0);
+    info.version = send_query24(d, ccmd::QUERY_VERSION_NUMBER.cmd(addr.bus_address()))
+        .await?
+        .unwrap_or(0);
     Ok(info)
 }

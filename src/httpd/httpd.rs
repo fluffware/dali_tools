@@ -12,6 +12,8 @@ use std::net::IpAddr;
 #[include = "*.js"]
 #[include = "*.css"]
 #[include = "*.svg"]
+#[include = "*.webm"]
+#[include = "*.webp"]
 #[include = "*.wav"]
 struct WebFiles;
 
@@ -29,7 +31,9 @@ pub fn start(
             "html" => "text/html",
             "hbs" => "text/x.handlebars",
             "js" => "text/javascript",
-            "svg" => "image/scg+xml",
+            "svg" => "image/svg+xml",
+	    "webm" => "video/webm",
+	    "webm" => "image/webp",
             "css" => "text/css",
             "wav" => "audio/wave",
             _ => "application/octet-stream",

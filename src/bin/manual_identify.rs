@@ -7,6 +7,7 @@ use std::pin::Pin;
 use std::process::ExitCode;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
+use std::cmp;
 use std::sync::atomic::{self, AtomicU16};
 use std::sync::{Arc, Mutex as BlockingMutex, RwLock};
 use std::task::{Context, Poll};
@@ -23,14 +24,15 @@ use serde_derive::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::Duration;
 
-use dali::base::address::{Address, Long, Short};
-use dali::base::status::GearStatus;
+use dali::common::address::{Long, Short};
 use dali::common::defs::MASK;
-use dali::gear::cmd_defs as cmd;
 use dali::drivers::command_utils::send16;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG};
+use dali::gear::address::Address;
+use dali::gear::cmd_defs as cmd;
+use dali::gear::status::GearStatus;
 use dali::httpd::{self, ServerConfig};
 use dali::utils::address_assignment::program_short_addresses;
 //use dali::utils::filtered_vec::FilteredVec;
@@ -135,7 +137,7 @@ async fn find<F>(driver: &SyncDriver, found: &mut F) -> DynResult<()>
 where
     F: FnMut(GearData),
 {
-    for addr in 1..=64 {
+    for addr in 0..64 {
         debug!("Checking {}", addr);
         let driver = &mut **driver.lock().await;
         let status =
@@ -215,7 +217,25 @@ fn reply_scan_update(ctxt: &IdentificationCtxt) -> String {
         .unwrap()
     })
 }
+async fn clear_scan(driver: &SyncDriver, ctxt: &Arc<IdentificationCtxt>) -> DynResult<()> {
+    set_low_level(
+        driver,
+        ctxt.low_level.load(Ordering::Relaxed),
+        &Address::Broadcast,
+    )
+    .await?;
 
+    let addr: Option<u8> = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr));
+    if let Some(addr) = addr {
+        set_high_level(
+            driver,
+            ctxt.high_level.load(Ordering::Relaxed),
+            &Address::Short(Short::new(addr)),
+        )
+        .await?;
+    }
+    Ok(())
+}
 async fn handle_commands(
     driver: &SyncDriver,
     ctxt: &Arc<IdentificationCtxt>,
@@ -241,25 +261,8 @@ async fn handle_commands(
                 })
             })
             .await?;
-
-            set_low_level(
-                driver,
-                ctxt.low_level.load(Ordering::Relaxed),
-                &Address::Broadcast,
-            )
-            .await?;
-            *current_high = false;
-
-            let addr: Option<u8> = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr));
-            if let Some(addr) = addr {
-                set_high_level(
-                    driver,
-                    ctxt.high_level.load(Ordering::Relaxed),
-                    &Address::Short(Short::new(addr)),
-                )
-                .await?;
-                *current_high = true;
-            }
+            clear_scan(driver, ctxt).await?;
+            *current_high = true;
         }
         /*
             DaliCommands::RequestScanUpdate => {
@@ -270,7 +273,8 @@ async fn handle_commands(
             ctxt.modify_state(|state| {
                 let gears = &mut state.gears;
                 if let Some(gear) = gears.get_mut(usize::from(index)).as_mut() {
-                    if address >= 1 && address <= 64 {
+                    if (0..64).contains(&address) {
+                        debug!("new_addr = {}", address);
                         gear.new_addr = Some(address);
                     }
                 }
@@ -289,12 +293,36 @@ async fn handle_commands(
                 }
             });
             program_short_addresses(driver, &swaps).await?;
+        }
+        DaliCommands::Sort => {
+            ctxt.modify_state(|state| {
+                let gears = &mut state.gears;
+                state.target_gear = 0;
+                state.current_gear = 0;
+                // First unallocated sorted by long address
+                // Second not remappped sorted by short address
+                // Last remapped sorted by new short address
+                gears.sort_by(|a, b| match (a.new_addr, b.new_addr) {
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    (Some(_), None) => cmp::Ordering::Greater,
+                    (None, Some(_)) => cmp::Ordering::Less,
+                    (None, None) => match (a.old_addr, b.old_addr) {
+                        (Some(a), Some(b)) => a.cmp(&b),
+                        (Some(_), None) => cmp::Ordering::Greater,
+                        (None, Some(_)) => cmp::Ordering::Less,
+                        (None, None) => a.long.cmp(&b.long),
+                    },
+                });
+            });
+            clear_scan(driver, ctxt).await?;
+            *current_high = true;
         } /*
-              DaliCommands::RequestGearList => {
-                  let gears = ctxt.gears.lock().unwrap();
-                  let list: Vec<GearData> = gears.iter().cloned().collect();
-                  let _ = cmd_req.reply.send(DaliReplies::GearList(list));
-          }
+                       DaliCommands::RequestGearList => {
+                           let gears = ctxt.gears.lock().unwrap();
+                           let list: Vec<GearData> = gears.iter().cloned().collect();
+                           let _ = cmd_req.reply.send(DaliReplies::GearList(list));
+                   }
+                              program_short_addresses(driver, &swaps).await?;
           */
     }
     Ok(DaliCommandStatus::Done)
@@ -442,11 +470,12 @@ fn decode_get_request(
             }
             DaliCommands::FIND_ALL => DaliCommands::FindAll,
             DaliCommands::NEW_ADDRESS => {
-                let address = get_int_arg(&args, "address", 1..=64)? as u8;
+                let address = get_int_arg(&args, "address", 0..=63)? as u8;
                 let index = get_int_arg(&args, "index", 0..=63)? as u8;
                 DaliCommands::NewAddress { address, index }
             }
             DaliCommands::CHANGE_ADDRESSES => DaliCommands::ChangeAddresses,
+            DaliCommands::SORT => DaliCommands::Sort,
             _ => return bad_request("Unknown command number"),
         };
         /*
@@ -534,6 +563,7 @@ enum DaliCommands {
     FindAll,
     NewAddress { address: u8, index: u8 },
     ChangeAddresses,
+    Sort,
 }
 
 impl DaliCommands {
@@ -542,6 +572,7 @@ impl DaliCommands {
     pub const FIND_ALL: u32 = 2;
     pub const NEW_ADDRESS: u32 = 3;
     pub const CHANGE_ADDRESSES: u32 = 4;
+    pub const SORT: u32 = 5;
 }
 
 impl serde::Serialize for DaliCommands {
@@ -556,6 +587,7 @@ impl serde::Serialize for DaliCommands {
             FindAll => Self::FIND_ALL,
             NewAddress { .. } => Self::NEW_ADDRESS,
             ChangeAddresses { .. } => Self::CHANGE_ADDRESSES,
+            Sort { .. } => Self::SORT,
         })
     }
 }

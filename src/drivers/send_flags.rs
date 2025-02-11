@@ -13,7 +13,7 @@ pub const SEND_TWICE: Flags = SendTwice(true);
 pub const NO_FLAG: Flags = Combined(0);
 pub const PRIORITY_DEFAULT: Flags = PRIORITY_5;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Flags {
     Empty,
     Priority(u16),
@@ -24,7 +24,7 @@ pub enum Flags {
 
 use Flags::*;
 impl Flags {
-    fn bits(&self) -> u16 {
+    const fn bits(&self) -> u16 {
         match *self {
             Empty => 0,
             Priority(p) => (p & PRIORITY_MASK) << PRIORITY_SHIFT,
@@ -46,7 +46,7 @@ impl Flags {
         }
     }
 
-    pub fn send_twice(&self) -> bool {
+    pub const fn send_twice(&self) -> bool {
         (self.bits() & SEND_TWICE_BIT) != 0
     }
 

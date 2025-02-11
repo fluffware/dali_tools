@@ -2,7 +2,7 @@ use crate as dali;
 use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, SEND_TWICE};
 use crate::utils::long_address::{query_long_addr, set_search_addr};
-use dali::base::address::{BusAddress, Long, Short};
+use dali::common::address::{BusAddress, Long, Short};
 use dali::gear::cmd_defs as cmd;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
 use std::collections::BTreeMap;

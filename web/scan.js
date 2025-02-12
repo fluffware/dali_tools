@@ -318,7 +318,7 @@ function startup()
 	stop_swipe();
     })
     
-    let low_part = document.getElementById("low_part");
+    let low_part = document.getElementById("low_box");
     let resize = new ResizeObserver((entries) => {
 	swipe.style.width = '100%';
 	swipe.style.height = '100%';

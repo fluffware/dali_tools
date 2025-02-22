@@ -33,7 +33,7 @@ pub fn start(
             "js" => "text/javascript",
             "svg" => "image/svg+xml",
 	    "webm" => "video/webm",
-	    "webm" => "image/webp",
+	    "webp" => "image/webp",
             "css" => "text/css",
             "wav" => "audio/wave",
             _ => "application/octet-stream",

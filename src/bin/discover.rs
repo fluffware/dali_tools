@@ -2,10 +2,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
-use dali::gear::cmd_defs as cmd;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver_utils::DaliDriverExt;
 use dali::drivers::send_flags::SEND_TWICE;
+use dali::gear::cmd_defs as cmd;
 use dali::utils::address_assignment::clear_short_address;
 use dali::utils::discover;
 
@@ -98,8 +98,7 @@ async fn main() {
                 if let Err(e) = clear_short_address(driver.as_mut(), long).await {
                     println!(
                         "Failed to clear short address for long address {}: {}",
-                        long,
-                        e,
+                        long, e,
                     );
                 }
             }

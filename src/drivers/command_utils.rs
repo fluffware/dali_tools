@@ -77,5 +77,3 @@ pub mod send16 {
         driver.send_frame16(&[cmd::DTR2, dtr], flags)
     }
 }
-
-

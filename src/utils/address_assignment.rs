@@ -3,11 +3,11 @@ use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG, SEND_TWICE};
 use crate::utils::long_address::{query_long_addr, set_search_addr};
 use dali::common::address::{BusAddress, Long, Short};
-use dali::gear::cmd_defs as cmd;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
+use dali::gear::cmd_defs as cmd;
+use log::debug;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use log::debug;
 
 #[derive(Debug)]
 pub enum Error {
@@ -64,7 +64,7 @@ pub async fn program_short_address(
 }
 
 pub async fn clear_short_address(driver: &mut dyn DaliDriver, long: Long) -> Result<(), Error> {
-    debug!("Clearing {}",long);
+    debug!("Clearing {}", long);
     set_search_addr(driver, long).await?;
     driver
         .send_frame16(&[cmd::PROGRAM_SHORT_ADDRESS, 0xff], NO_FLAG)
@@ -91,7 +91,7 @@ pub async fn program_short_addresses(
 
     // Gather all long addresses
     for (old, new) in map {
-	debug!("Map {} -> {}", old,new);
+        debug!("Map {} -> {}", old, new);
         if !old_set.insert(old) {
             return Err(Error::AddressCollision);
         }
@@ -101,8 +101,8 @@ pub async fn program_short_addresses(
         }
         if !old_map.contains_key(new) {
             if let Ok(long_new) = query_long_addr(driver, new).await {
-		old_map.insert(new, long_new);
-	    }
+                old_map.insert(new, long_new);
+            }
         }
     }
     driver
@@ -130,4 +130,3 @@ pub async fn program_short_addresses(
         .check_send()?;
     Ok(())
 }
-

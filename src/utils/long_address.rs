@@ -1,10 +1,10 @@
 use crate::common::address::Long;
 use crate::common::address::Short;
-use crate::gear::cmd_defs as cmd;
 use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::{EXPECT_ANSWER, PRIORITY_1};
+use crate::gear::cmd_defs as cmd;
 
 pub async fn set_search_addr_changed(
     driver: &mut dyn DaliDriver,

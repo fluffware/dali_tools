@@ -100,9 +100,7 @@ impl<'a> Commands for Commands103<'a> {
             .await
     }
     async fn query_short_address(&mut self) -> Result<Self::Short, Self::Error> {
-        let raw = self
-            .request_answer(&QUERY_SHORT_ADDRESS)
-            .await?;
+        let raw = self.request_answer(&QUERY_SHORT_ADDRESS).await?;
         Ok(Short::new(raw >> 1))
     }
     async fn dtr0(&mut self, data: u8) -> Result<(), Self::Error> {
@@ -124,7 +122,7 @@ impl<'a> Commands for Commands103<'a> {
     }
 
     async fn query_random_address(&mut self, device: Address) -> Result<u32, Self::Error> {
-	let dev_addr = device.bus_address();
+        let dev_addr = device.bus_address();
         let h = self
             .request_answer(&QUERY_RANDOM_ADDRESS_H.cmd(dev_addr))
             .await?;
@@ -142,6 +140,7 @@ impl<'a> Commands for Commands103<'a> {
     }
 
     async fn identify_device(&mut self, device: Address) -> Result<(), Self::Error> {
-        self.send_frame(&IDENTIFY_DEVICE.cmd(device.bus_address())).await
+        self.send_frame(&IDENTIFY_DEVICE.cmd(device.bus_address()))
+            .await
     }
 }

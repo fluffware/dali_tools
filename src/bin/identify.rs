@@ -85,9 +85,14 @@ fn sleep_delta(last: &mut std::time::Instant, dur: std::time::Duration) {
 async fn identify(driver: &mut dyn DaliDriver) -> Result<(), Box<dyn Error>> {
     let mut next = tokio::time::Instant::now();
     for s in 0..10 {
-        send16::device_cmd(driver, &Address::Broadcast, cmd::GO_TO_SCENE_6 + s, PRIORITY_1)
-            .await
-            .check_send()?;
+        send16::device_cmd(
+            driver,
+            &Address::Broadcast,
+            cmd::GO_TO_SCENE_6 + s,
+            PRIORITY_1,
+        )
+        .await
+        .check_send()?;
         next += BIT_TIME;
         tokio::time::sleep_until(next).await;
     }

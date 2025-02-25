@@ -7,11 +7,11 @@ pub type Address = AddressImpl<16>;
 
 #[cfg(test)]
 mod test {
-    use super::{Address,Group};
-    use crate::common::address::{BusAddress,  Short};
-    use std::convert::TryFrom;
+    use super::{Address, Group};
     use crate::common::address::DisplayValue;
-    
+    use crate::common::address::{BusAddress, Short};
+    use std::convert::TryFrom;
+
     #[test]
     fn short_address_test() {
         let a: Short = Short::new(1);

@@ -1,9 +1,9 @@
 use crate::common::address::Short;
-use crate::gear::cmd_defs as cmd;
 use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG};
+use crate::gear::cmd_defs as cmd;
 use std::convert::TryInto;
 use std::error::Error;
 use std::fmt;

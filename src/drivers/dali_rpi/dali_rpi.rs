@@ -150,7 +150,7 @@ async fn driver_thread(
             },
             r = serial.read(&mut ser_rx_buf[ser_rx_pos..]) => {
                 match &r {
-                    Ok(ref n) => {
+                    Ok(n) => {
                         let now = Instant::now();
                         // Skip buffered data if it's too old
                         if now - last_rx_time > Duration::from_millis(200) {

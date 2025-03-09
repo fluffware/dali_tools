@@ -1,9 +1,9 @@
 use crate::common::address::Short;
-use crate::gear::cmd_defs as cmd;
 use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
-use crate::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG};
+use crate::drivers::send_flags::NO_FLAG;
+use crate::gear::cmd_defs as cmd;
 use std::convert::TryInto;
 use std::error::Error;
 use std::fmt;
@@ -116,22 +116,22 @@ pub async fn read_range(
     start: u8,
     length: u8,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    d.send_frame16(&[cmd::DTR1, bank], NO_FLAG)
+    d.send_frame16(&cmd::DTR1(bank).0, NO_FLAG)
         .await
         .check_send()?;
-    d.send_frame16(&[cmd::DTR0, start], NO_FLAG)
+    d.send_frame16(&cmd::DTR0(start).0, NO_FLAG)
         .await
         .check_send()?;
     let mut data = Vec::new();
     for _ in 0..length {
-        match send16::device_cmd(d, &addr, cmd::READ_MEMORY_LOCATION, EXPECT_ANSWER).await {
+        match send16::query(d, cmd::READ_MEMORY_LOCATION(addr), NO_FLAG).await {
             DaliSendResult::Answer(d) => data.push(d),
             DaliSendResult::Timeout => break,
             e => return Err(Box::new(e)),
         }
     }
 
-    let dtr = send16::device_cmd(d, &addr, cmd::QUERY_CONTENT_DTR0, EXPECT_ANSWER)
+    let dtr = send16::query(d, cmd::QUERY_CONTENT_DTR0(addr), NO_FLAG)
         .await
         .check_answer()?;
     if length as usize == data.len() {

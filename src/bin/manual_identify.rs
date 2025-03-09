@@ -1,3 +1,4 @@
+use std::cmp;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::future::{self};
@@ -7,7 +8,6 @@ use std::pin::Pin;
 use std::process::ExitCode;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
-use std::cmp;
 use std::sync::atomic::{self, AtomicU16};
 use std::sync::{Arc, Mutex as BlockingMutex, RwLock};
 use std::task::{Context, Poll};
@@ -24,52 +24,25 @@ use serde_derive::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::Duration;
 
-use dali::common::address::{Long, Short};
+use dali::common::address::Short;
 use dali::common::defs::MASK;
+use dali::common::driver_commands::DriverCommands;
 use dali::drivers::command_utils::send16;
 use dali::drivers::driver::OpenError;
 use dali::drivers::driver::{DaliDriver, DaliSendResult};
-use dali::drivers::send_flags::{EXPECT_ANSWER, NO_FLAG};
+use dali::drivers::send_flags::NO_FLAG;
+use dali::drivers::send_flags::PRIORITY_1;
 use dali::gear::address::Address;
 use dali::gear::cmd_defs as cmd;
+use dali::gear::commands_102::Commands102;
 use dali::gear::status::GearStatus;
 use dali::httpd::{self, ServerConfig};
 use dali::utils::address_assignment::program_short_addresses;
+use dali_tools::common::commands::Commands;
 //use dali::utils::filtered_vec::FilteredVec;
 use dali_tools as dali;
 
 type DynResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
-
-async fn query_long_addr(
-    driver: &mut dyn DaliDriver,
-    short_addr: Short,
-) -> Result<Long, DaliSendResult> {
-    let h = send16::device_cmd(
-        driver,
-        &short_addr,
-        cmd::QUERY_RANDOM_ADDRESS_H,
-        EXPECT_ANSWER,
-    )
-    .await
-    .check_answer()?;
-    let m = send16::device_cmd(
-        driver,
-        &short_addr,
-        cmd::QUERY_RANDOM_ADDRESS_M,
-        EXPECT_ANSWER,
-    )
-    .await
-    .check_answer()?;
-    let l = send16::device_cmd(
-        driver,
-        &short_addr,
-        cmd::QUERY_RANDOM_ADDRESS_L,
-        EXPECT_ANSWER,
-    )
-    .await
-    .check_answer()?;
-    Ok((h as u32) << 16 | (m as u32) << 8 | (l as u32))
-}
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct GearData {
@@ -140,17 +113,15 @@ where
     for addr in 0..64 {
         debug!("Checking {}", addr);
         let driver = &mut **driver.lock().await;
-        let status =
-            match send16::device_cmd(driver, &Short::new(addr), cmd::QUERY_STATUS, EXPECT_ANSWER)
-                .await
-            {
-                DaliSendResult::Answer(s) => Some(GearStatus::new(s)),
-                DaliSendResult::Timeout => None,
-                e => return Err(e.into()),
-            };
+        let mut cmd = Commands102::from_driver(driver, PRIORITY_1);
+        let status = match cmd.query(cmd::QUERY_STATUS(Short::new(addr))).await {
+            Ok(s) => Some(GearStatus::new(s)),
+            Err(DaliSendResult::Timeout) => None,
+            Err(e) => return Err(e.into()),
+        };
         if let Some(status) = status {
             info!("{}: Status: {}\r\n", addr, status);
-            match query_long_addr(driver, Short::new(addr)).await {
+            match cmd.query_random_address(Short::new(addr)).await {
                 Ok(l) => {
                     info!("{}: Long: {:06x}\r\n", addr, l);
                     found(GearData {
@@ -169,9 +140,9 @@ where
 async fn set_low_level(driver: &SyncDriver, low_level: u8, addr: &Address) -> DynResult<()> {
     let driver = &mut **driver.lock().await;
     match if low_level == MASK {
-        send16::device_cmd(driver, addr, cmd::RECALL_MIN_LEVEL, NO_FLAG).await
+        send16::cmd(driver, cmd::RECALL_MIN_LEVEL(*addr), NO_FLAG).await
     } else {
-        send16::device_level(driver, addr, low_level, NO_FLAG).await
+        send16::device_level(driver, *addr, low_level, NO_FLAG).await
     } {
         DaliSendResult::Ok => {}
         e => return Err(e.into()),
@@ -182,9 +153,9 @@ async fn set_low_level(driver: &SyncDriver, low_level: u8, addr: &Address) -> Dy
 async fn set_high_level(driver: &SyncDriver, high_level: u8, addr: &Address) -> DynResult<()> {
     let driver = &mut **driver.lock().await;
     match if high_level == MASK {
-        send16::device_cmd(driver, addr, cmd::RECALL_MAX_LEVEL, NO_FLAG).await
+        send16::cmd(driver, cmd::RECALL_MAX_LEVEL(*addr), NO_FLAG).await
     } else {
-        send16::device_level(driver, addr, high_level, NO_FLAG).await
+        send16::device_level(driver, *addr, high_level, NO_FLAG).await
     } {
         DaliSendResult::Ok => {}
         e => return Err(e.into()),
@@ -292,7 +263,8 @@ async fn handle_commands(
                     }
                 }
             });
-            program_short_addresses(driver, &swaps).await?;
+            let mut cmd = Commands102::from_driver(driver, PRIORITY_1);
+            program_short_addresses(&mut cmd, &swaps).await?;
         }
         DaliCommands::Sort => {
             ctxt.modify_state(|state| {

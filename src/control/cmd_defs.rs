@@ -1,98 +1,57 @@
+use crate::common::address::Short;
+use crate::common::cmd_defs::AddressByte;
+
 pub struct Command<const ANSWER: bool, const TWICE: bool>(pub [u8; 3]);
 
-impl<const ANSWER: bool, const TWICE: bool> Command<ANSWER, TWICE> {
-    const fn new(address: u8, instance: u8, opcode: u8) -> Self {
-        Command([address, instance, opcode])
-    }
-}
-
-pub struct DeviceCommand<const ANSWER: bool, const TWICE: bool> {
-    opcode: u8,
-}
-
-impl<const ANSWER: bool, const TWICE: bool> DeviceCommand<ANSWER, TWICE> {
-    const fn new(opcode: u8) -> Self {
-        DeviceCommand { opcode }
-    }
-    pub fn cmd(&self, device: u8) -> Command<ANSWER, TWICE> {
-        Command([device | 1, 0xfe, self.opcode])
-    }
-}
-
-pub struct InstanceCommand<const ANSWER: bool, const TWICE: bool> {
-    opcode: u8,
-}
-
-impl<const ANSWER: bool, const TWICE: bool> InstanceCommand<ANSWER, TWICE> {
-    const fn new(opcode: u8) -> Self {
-        InstanceCommand { opcode }
-    }
-    pub fn cmd(&self, device: u8, instance: u8) -> Command<ANSWER, TWICE> {
-        Command([device | 1, instance, self.opcode])
-    }
-}
-
-// Special commands with one data byte at the end */
-pub struct SpecialDataCommand<const ANSWER: bool, const TWICE: bool> {
-    instance: u8,
-}
-
-impl<const ANSWER: bool, const TWICE: bool> SpecialDataCommand<ANSWER, TWICE> {
-    const fn new(instance: u8) -> Self {
-        SpecialDataCommand { instance }
-    }
-    pub fn cmd(&self, data: u8) -> Command<ANSWER, TWICE> {
-        Command([0xc1, self.instance, data])
-    }
-}
-
-// Special commands with two data bytes at the end */
-pub struct SpecialData2Command<const ANSWER: bool, const TWICE: bool> {
-    address: u8,
-}
-
-impl<const ANSWER: bool, const TWICE: bool> SpecialData2Command<ANSWER, TWICE> {
-    const fn new(address: u8) -> Self {
-        SpecialData2Command { address }
-    }
-    pub fn cmd(&self, data1: u8, data2: u8) -> Command<ANSWER, TWICE> {
-        Command([self.address, data1, data2])
-    }
+macro_rules! cmd_type {
+    () => {Command<false,false>};
+    (Answer) => {Command<true,false>};
+    (Twice) => {Command<false,true>};
 }
 
 macro_rules! dev_cmd_def {
-    ($sym: ident, $opcode: expr) => {
-        pub const $sym: DeviceCommand<false, false> = DeviceCommand::new($opcode);
-    };
-    ($sym: ident, $opcode: expr, Answer) => {
-        pub const $sym: DeviceCommand<true, false> = DeviceCommand::new($opcode);
-    };
-    ($sym: ident, $opcode: expr, Twice) => {
-        pub const $sym: DeviceCommand<false, true> = DeviceCommand::new($opcode);
+   ($sym: ident, $opcode: expr $(,$attr: ident)?) => {
+       #[allow(non_snake_case)]
+       #[inline(always)]
+       pub fn $sym<A>(addr: A) -> cmd_type!($($attr)?)
+       where
+           A: Into<AddressByte>,
+       {
+            Command([addr.into().0, 0xfe, $opcode])
+        }
     };
 }
 
 macro_rules! inst_cmd_def {
-    ($sym: ident, $opcode: expr) => {
-        pub const $sym: InstanceCommand<false, false> = InstanceCommand::new($opcode);
-    };
-    ($sym: ident,  $opcode: expr, Answer) => {
-        pub const $sym: InstanceCommand<true, false> = InstanceCommand::new($opcode);
-    };
-    ($sym: ident,   $opcode: expr, Twice) => {
-        pub const $sym: InstanceCommand<false, true> = InstanceCommand::new($opcode);
+    ($sym: ident, $opcode: expr $(,$attr: ident)?) => {
+	#[allow(non_snake_case)]
+	#[inline(always)]
+        pub fn $sym<A>(addr: A, inst: u8) -> cmd_type!($($attr)?)
+        where
+            A: Into<AddressByte>,
+        {
+            Command([addr.into().0, inst, $opcode])
+        }
     };
 }
-
+macro_rules! special_cmd_def {
+    ($sym: ident, $inst: expr, $opcode: expr $(,$attr: ident)?) => {
+	#[allow(non_snake_case)]
+	#[inline(always)]
+        pub fn $sym() -> cmd_type!($($attr)?)
+        {
+            Command([0xc1, $inst, $opcode])
+        }
+    };
+}
 macro_rules! special_data_cmd_def {
-    ($sym: ident, $instance: expr) => {
-        pub const $sym: SpecialDataCommand<false, false> = SpecialDataCommand::new($instance);
-    };
-    ($sym: ident, $instance: expr, Answer) => {
-        pub const $sym: SpecialDataCommand<true, false> = SpecialDataCommand::new($instance);
-    };
-    ($sym: ident, $instance: expr, Twice) => {
-        pub const $sym: SpecialDataCommand<false, true> = SpecialDataCommand::new($instance);
+     ($sym: ident, $opcode: expr $(,$attr: ident)?) => {
+	#[allow(non_snake_case)]
+	#[inline(always)]
+        pub fn $sym(data: u8) -> cmd_type!($($attr)?)
+        {
+            Command([0xc1, $opcode, data])
+        }
     };
 }
 
@@ -167,24 +126,61 @@ inst_cmd_def!(QUERY_EVENT_FILTER_0_7, 0x90, Answer);
 inst_cmd_def!(QUERY_EVENT_FILTER_8_15, 0x91, Answer);
 inst_cmd_def!(QUERY_EVENT_FILTER_16_23, 0x92, Answer);
 
-pub const TERMINATE: Command<false, false> = Command::new(0xc1, 0x00, 0x00);
+special_cmd_def!(TERMINATE, 0x00, 0x00);
 
-special_data_cmd_def!(INITIALISE, 0x01, Twice);
-pub const RANDOMISE: Command<false, true> = Command::new(0xc1, 0x02, 0x00);
-pub const COMPARE: Command<true, false> = Command::new(0xc1, 0x03, 0x00);
-pub const WITHDRAW: Command<false, false> = Command::new(0xc1, 0x04, 0x00);
+#[allow(non_snake_case)]
+#[inline(always)]
+pub fn INITIALISE_ADDR(addr: Short) -> Command<false, true> {
+    Command([0xc1, 0x01, addr.value()])
+}
+special_cmd_def!(INITIALISE_NO_ADDR, 0x01, 0x7f);
+special_cmd_def!(INITIALISE_ALL, 0x01, 0xff);
+special_cmd_def!(RANDOMISE, 0x02, 0x00, Twice);
+special_cmd_def!(COMPARE, 0x03, 0x00, Answer);
+special_cmd_def!(WITHDRAW, 0x04, 0x00);
 special_data_cmd_def!(SEARCHADDRH, 0x05);
 special_data_cmd_def!(SEARCHADDRM, 0x06);
 special_data_cmd_def!(SEARCHADDRL, 0x07);
-special_data_cmd_def!(PROGRAM_SHORT_ADDRESS, 0x08);
-special_data_cmd_def!(VERIFY_SHORT_ADDRESS, 0x09, Answer);
-pub const QUERY_SHORT_ADDRESS: Command<true, false> = Command::new(0xc1, 0x0a, 0x00);
+
+#[allow(non_snake_case)]
+#[inline(always)]
+pub fn PROGRAM_SHORT_ADDRESS<A>(addr: A) -> Command<false, false>
+where
+    A: Into<AddressByte>,
+{
+    Command([0xc1, 0x08, addr.into().0 >> 1])
+}
+
+#[allow(non_snake_case)]
+#[inline(always)]
+pub fn VERIFY_SHORT_ADDRESS<A>(addr: A) -> Command<true, false>
+where
+    A: Into<AddressByte>,
+{
+    Command([0xc1, 0x09, addr.into().0 >> 1])
+}
+special_cmd_def!(QUERY_SHORT_ADDRESS, 0x0a, 0x00, Answer);
 special_data_cmd_def!(WRITE_MEMORY_LOCATION, 0x20, Answer);
 special_data_cmd_def!(WRITE_MEMORY_LOCATION_NO_REPLY, 0x21);
 special_data_cmd_def!(DTR0, 0x30);
 special_data_cmd_def!(DTR1, 0x31);
 special_data_cmd_def!(DTR2, 0x32);
 special_data_cmd_def!(SEND_TESTFRAME, 0x33);
-pub const DIRECT_WRITE_MEMORY: SpecialData2Command<true, false> = SpecialData2Command::new(0xc5);
-pub const DTR1_DTR0: SpecialData2Command<false, false> = SpecialData2Command::new(0xc7);
-pub const DTR2_DTR1: SpecialData2Command<false, false> = SpecialData2Command::new(0xc9);
+
+#[allow(non_snake_case)]
+#[inline(always)]
+pub fn DIRECT_WRITE_MEMORY(offset: u8, data: u8) -> Command<true, false> {
+    Command([0xc5, offset, data])
+}
+
+#[allow(non_snake_case)]
+#[inline(always)]
+pub fn DTR1_DTR0(data1: u8, data0: u8) -> Command<true, false> {
+    Command([0xc7, data1, data0])
+}
+
+#[allow(non_snake_case)]
+#[inline(always)]
+pub fn DTR2_DTR1(data2: u8, data1: u8) -> Command<true, false> {
+    Command([0xc9, data2, data1])
+}

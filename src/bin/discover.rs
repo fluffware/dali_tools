@@ -2,12 +2,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
-use dali::gear::cmd_defs as cmd;
 use dali::drivers::driver::OpenError;
-use dali::drivers::driver_utils::DaliDriverExt;
-use dali::drivers::send_flags::SEND_TWICE;
+use dali::drivers::send_flags::PRIORITY_1;
+use dali::gear::commands_102::Commands102;
 use dali::utils::address_assignment::clear_short_address;
 use dali::utils::discover;
+use dali_tools::common::commands::Commands;
+use dali_tools::common::driver_commands::DriverCommands;
 
 use dali_tools as dali;
 extern crate clap;
@@ -52,7 +53,7 @@ async fn main() {
     };
 
     let driver = Arc::new(Mutex::new(driver));
-    let mut discovered = discover::find_quick(driver.clone());
+    let mut discovered = discover::find_quick::<Commands102>(driver.clone());
 
     let mut short_conflicts = Vec::new();
     while let Some(res) = discovered.next().await {
@@ -90,16 +91,14 @@ async fn main() {
     }
     if clear_conflicts {
         let mut driver = driver.lock().await;
-        (*driver)
-            .send_frame16(&[cmd::INITIALISE, cmd::INITIALISE_ALL], SEND_TWICE)
-            .await;
+        let mut commands = Commands102::from_driver(driver.as_mut(), PRIORITY_1);
+        let _ = commands.initialise_all().await;
         for d in short_conflicts {
             if let Some(long) = d.long {
-                if let Err(e) = clear_short_address(driver.as_mut(), long).await {
+                if let Err(e) = clear_short_address(&mut commands, long).await {
                     println!(
                         "Failed to clear short address for long address {}: {}",
-                        long,
-                        e,
+                        long, e,
                     );
                 }
             }

@@ -1,52 +1,67 @@
 use crate::common::commands::{Commands, YesNo};
-use crate::control::address::{Address, Short};
-use crate::control::cmd_defs::*;
-use crate::drivers::command_utils::send24;
+use crate::common::driver_commands::DriverCommands;
+use crate::gear::address::{Address, Short};
+use crate::gear::cmd_defs::*;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::send_flags::{Flags, PRIORITY_DEFAULT};
+use crate::drivers::command_utils::send16;
 
-pub struct Commands103<'a> {
+pub struct Commands102<'a> {
     driver: &'a mut dyn DaliDriver,
     flags: Flags,
 }
 
-impl<'a> Commands103<'a> {
+impl<'a> Commands102<'a> {
     pub fn new(driver: &'a mut dyn DaliDriver) -> Self {
-        Commands103 {
+        Commands102 {
             driver,
             flags: PRIORITY_DEFAULT,
         }
     }
 
-    async fn cmd<const TWICE: bool>(
+   
+    pub async fn cmd<const TWICE: bool>(
         &mut self,
         cmd: Command<false, TWICE>,
     ) -> Result<(), DaliSendResult> {
-        send24::cmd(self.driver, cmd, self.flags.clone())
+        send16::cmd(self.driver, cmd, self.flags.clone())
             .await
             .check_send()
     }
 
-    async fn query(&mut self, cmd: Command<true, false>) -> Result<u8, DaliSendResult> {
-        send24::query(self.driver, cmd, self.flags.clone())
+    pub async fn query(&mut self, cmd: Command<true, false>) -> Result<u8, DaliSendResult> {
+        send16::query(self.driver, cmd, self.flags.clone())
             .await
             .check_answer()
     }
-    async fn query_yes_no(&mut self, cmd: Command<true, false>) -> Result<YesNo, DaliSendResult> {
-        match send24::query(self.driver, cmd, self.flags.clone()).await {
-            DaliSendResult::Answer(v) => Ok(if v == 0xff {
-                YesNo::Yes
-            } else {
-                YesNo::Multiple
-            }),
-            DaliSendResult::Timeout => Ok(YesNo::No),
-            DaliSendResult::Framing => Ok(YesNo::Multiple),
-            e => Err(e),
+    pub async fn query_yes_no(&mut self, cmd: Command<true, false>) -> Result<YesNo, DaliSendResult> {
+        match send16::query(self.driver, cmd, self.flags.clone()).await {
+	    DaliSendResult::Answer(v) => {
+		Ok(if v == 0xff {YesNo::Yes} else {YesNo::Multiple})
+	    }
+	    DaliSendResult::Timeout => Ok(YesNo::No),
+	    DaliSendResult::Framing => Ok(YesNo::Multiple),
+	    e => Err(e)
+	}
+    }
+    
+}
+
+impl DriverCommands for Commands102<'_> 
+{
+    type Output<'a> = Commands102<'a>;
+    fn from_driver<'a>(driver: &'a mut dyn DaliDriver, flags: Flags) -> Self::Output<'a>
+    {
+        Commands102 {
+            driver,
+            flags,
         }
     }
 }
 
-impl<'a> Commands for Commands103<'a> {
+
+impl<'a> Commands for Commands102<'a>
+{
     type Address = Address;
     type Error = DaliSendResult;
     async fn initialise_all(&mut self) -> Result<(), Self::Error> {
@@ -122,7 +137,7 @@ impl<'a> Commands for Commands103<'a> {
         let h = self.query(QUERY_RANDOM_ADDRESS_H(dev_addr)).await?;
         let m = self.query(QUERY_RANDOM_ADDRESS_M(dev_addr)).await?;
         let l = self.query(QUERY_RANDOM_ADDRESS_L(dev_addr)).await?;
-        Ok((u32::from(h) << 8) | u32::from(m) << 8 | u32::from(l))
+        Ok((u32::from(h) << 16) | (u32::from(m) << 8) | u32::from(l))
     }
     async fn read_memory_location(&mut self, device: Short) -> Result<u8, Self::Error> {
         self.query(READ_MEMORY_LOCATION(device)).await

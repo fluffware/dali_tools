@@ -9,10 +9,10 @@ use crate::utils::long_address;
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::mpsc::{error::SendError, Sender};
 use tokio::sync::Mutex;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio::sync::mpsc::{Sender, error::SendError};
 use tokio_stream::Stream;
+use tokio_stream::wrappers::ReceiverStream;
 
 async fn send_blocking<T>(tx: &mut Sender<T>, item: T) -> Result<(), SendError<T>> {
     let sent = item;
@@ -352,9 +352,7 @@ where
 pub type DiscoverItem<E> = Result<Discovered, E>;
 
 async fn discover_thread<DC>(
-    mut tx: tokio::sync::mpsc::Sender<
-        DiscoverItem<DaliSendResult>,
-    >,
+    mut tx: tokio::sync::mpsc::Sender<DiscoverItem<DaliSendResult>>,
     driver: Arc<Mutex<Box<dyn DaliDriver>>>,
 ) where
     DC: DriverCommands + Send,
@@ -369,9 +367,7 @@ async fn discover_thread<DC>(
     match discover_async(&mut commands, &mut send_cb).await {
         Ok(()) => {}
         Err(e) => {
-            send_blocking(&mut tx, Err(e))
-                .await
-                .unwrap();
+            send_blocking(&mut tx, Err(e)).await.unwrap();
         }
     };
     let _ = commands.terminate().await;

@@ -1,6 +1,6 @@
 use crate::drivers::driver;
 use driver::DaliFrame;
-use rand::{thread_rng, Rng};
+use rand::{Rng, thread_rng};
 use std::time::Duration;
 
 pub const HALF_BIT_MICROS: u64 = 417;

@@ -123,7 +123,6 @@ pub mod send24 {
         driver.send_frame24(&cmd.0, flags | EXPECT_ANSWER)
     }
 
-
     /// Set value of DTR0
     ///
     /// # Arguments

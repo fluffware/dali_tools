@@ -1,11 +1,11 @@
 use crate::error::DynResult;
 use bytes::Bytes;
-use futures_util::sink::SinkExt;
 use futures_util::StreamExt;
+use futures_util::sink::SinkExt;
+use hyper::Method;
 use hyper::header;
 use hyper::http::StatusCode;
 use hyper::service::{make_service_fn, service_fn};
-use hyper::Method;
 use hyper::{Body, Request, Response, Server};
 use hyper_websocket_lite::AsyncClient;
 #[allow(unused_imports)]
@@ -153,7 +153,7 @@ async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult
                                 .body(Body::from(format!("File error: {e}")))
                                 .map_err(|e| {
                                     Box::new(e) as Box<dyn std::error::Error + Send + Sync>
-                                })
+                                });
                         }
                     }
                 };

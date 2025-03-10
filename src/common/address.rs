@@ -1,13 +1,14 @@
+use super::cmd_defs::AddressByte;
 use core::ops::RangeInclusive;
 use core::str::FromStr;
-use super::cmd_defs::AddressByte;
 
 /// Value used for display, normally 1 based
 pub trait DisplayValue {
     fn display_value(&self) -> u8;
     fn from_display_value<A>(value: A) -> Result<Self, AddressError>
     where
-        A: TryInto<u8>, Self: Sized;
+        A: TryInto<u8>,
+        Self: Sized;
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -53,8 +54,6 @@ impl Short {
         }
         Ok(a - Self::DISPLAY_RANGE.start())
     }
-
- 
 
     pub fn try_add(&self, add: i8) -> Result<Short, AddressError> {
         let a = (self.0 as i8 + add) as u8;
@@ -102,11 +101,9 @@ impl std::cmp::Ord for Short {
     }
 }
 
-impl Into<AddressByte> for Short
-{
-    fn into(self) -> AddressByte
-    {
-	AddressByte((self.0 << 1) | 1)
+impl Into<AddressByte> for Short {
+    fn into(self) -> AddressByte {
+        AddressByte((self.0 << 1) | 1)
     }
 }
 
@@ -141,7 +138,9 @@ impl std::fmt::Display for Short {
 impl FromStr for Short {
     type Err = AddressError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-	u8::from_str(s).map_or(Err(AddressError::InvalidAddress), |a| Self::from_display_value(a))
+        u8::from_str(s).map_or(Err(AddressError::InvalidAddress), |a| {
+            Self::from_display_value(a)
+        })
     }
 }
 
@@ -169,8 +168,6 @@ impl<const MAX: u8> GroupImpl<MAX> {
         }
         Ok(a - Self::DISPLAY_RANGE.start())
     }
-
-   
 }
 
 /*
@@ -202,18 +199,16 @@ impl<const MAX: u8> std::cmp::PartialEq<GroupImpl<MAX>> for GroupImpl<MAX> {
     }
 }
 
-impl<const MAX: u8> Into<AddressByte> for GroupImpl<MAX>
-{
-    fn into(self) -> AddressByte
-    {
-	AddressByte((self.0 << 1) | 0x81)
+impl<const MAX: u8> Into<AddressByte> for GroupImpl<MAX> {
+    fn into(self) -> AddressByte {
+        AddressByte((self.0 << 1) | 0x81)
     }
 }
 impl<const MAX: u8> DisplayValue for GroupImpl<MAX> {
     fn display_value(&self) -> u8 {
         self.0 + Self::DISPLAY_RANGE.start()
     }
-    
+
     fn from_display_value<A>(a: A) -> Result<GroupImpl<MAX>, AddressError>
     where
         A: TryInto<u8>,
@@ -228,10 +223,12 @@ impl<const MAX: u8> std::fmt::Display for GroupImpl<MAX> {
     }
 }
 
-impl<const MAX: u8>  FromStr for GroupImpl<MAX> {
+impl<const MAX: u8> FromStr for GroupImpl<MAX> {
     type Err = AddressError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-	u8::from_str(s).map_or(Err(AddressError::InvalidAddress), |a| Self::from_display_value(a))
+        u8::from_str(s).map_or(Err(AddressError::InvalidAddress), |a| {
+            Self::from_display_value(a)
+        })
     }
 }
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -283,15 +280,13 @@ impl<const MAX_GROUP: u8> std::cmp::PartialEq<GroupImpl<MAX_GROUP>> for AddressI
     }
 }
 
-impl <const MAX_GROUP: u8> Into<AddressByte> for AddressImpl<MAX_GROUP> 
-{
-    fn into(self) -> AddressByte
-    {
-	match self {
+impl<const MAX_GROUP: u8> Into<AddressByte> for AddressImpl<MAX_GROUP> {
+    fn into(self) -> AddressByte {
+        match self {
             AddressImpl::Short(a) => a.into(),
             AddressImpl::Group(a) => a.into(),
             AddressImpl::Broadcast => AddressByte(0xff),
             AddressImpl::BroadcastUnaddressed => AddressByte(0xfd),
-	}
+        }
     }
 }

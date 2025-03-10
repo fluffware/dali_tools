@@ -1,10 +1,10 @@
 use crate::common::commands::{Commands, YesNo};
 use crate::common::driver_commands::DriverCommands;
-use crate::gear::address::{Address, Short};
-use crate::gear::cmd_defs::*;
+use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::send_flags::{Flags, PRIORITY_DEFAULT};
-use crate::drivers::command_utils::send16;
+use crate::gear::address::{Address, Short};
+use crate::gear::cmd_defs::*;
 
 pub struct Commands102<'a> {
     driver: &'a mut dyn DaliDriver,
@@ -19,7 +19,6 @@ impl<'a> Commands102<'a> {
         }
     }
 
-   
     pub async fn cmd<const TWICE: bool>(
         &mut self,
         cmd: Command<false, TWICE>,
@@ -34,34 +33,31 @@ impl<'a> Commands102<'a> {
             .await
             .check_answer()
     }
-    pub async fn query_yes_no(&mut self, cmd: Command<true, false>) -> Result<YesNo, DaliSendResult> {
+    pub async fn query_yes_no(
+        &mut self,
+        cmd: Command<true, false>,
+    ) -> Result<YesNo, DaliSendResult> {
         match send16::query(self.driver, cmd, self.flags.clone()).await {
-	    DaliSendResult::Answer(v) => {
-		Ok(if v == 0xff {YesNo::Yes} else {YesNo::Multiple})
-	    }
-	    DaliSendResult::Timeout => Ok(YesNo::No),
-	    DaliSendResult::Framing => Ok(YesNo::Multiple),
-	    e => Err(e)
-	}
-    }
-    
-}
-
-impl DriverCommands for Commands102<'_> 
-{
-    type Output<'a> = Commands102<'a>;
-    fn from_driver<'a>(driver: &'a mut dyn DaliDriver, flags: Flags) -> Self::Output<'a>
-    {
-        Commands102 {
-            driver,
-            flags,
+            DaliSendResult::Answer(v) => Ok(if v == 0xff {
+                YesNo::Yes
+            } else {
+                YesNo::Multiple
+            }),
+            DaliSendResult::Timeout => Ok(YesNo::No),
+            DaliSendResult::Framing => Ok(YesNo::Multiple),
+            e => Err(e),
         }
     }
 }
 
+impl DriverCommands for Commands102<'_> {
+    type Output<'a> = Commands102<'a>;
+    fn from_driver<'a>(driver: &'a mut dyn DaliDriver, flags: Flags) -> Self::Output<'a> {
+        Commands102 { driver, flags }
+    }
+}
 
-impl<'a> Commands for Commands102<'a>
-{
+impl<'a> Commands for Commands102<'a> {
     type Address = Address;
     type Error = DaliSendResult;
     async fn initialise_all(&mut self) -> Result<(), Self::Error> {

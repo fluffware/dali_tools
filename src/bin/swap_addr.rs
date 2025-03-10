@@ -9,7 +9,7 @@ use dali_tools as dali;
 use dali_tools::common::driver_commands::DriverCommands;
 
 extern crate clap;
-use clap::{value_parser, Arg, Command as ClapCommand};
+use clap::{Arg, Command as ClapCommand, value_parser};
 
 async fn swap_addr<C>(
     commands: &mut C,

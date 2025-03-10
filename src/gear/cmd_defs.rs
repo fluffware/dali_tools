@@ -161,7 +161,7 @@ special_cmd_def!(INITIALISE_ALL, 0xa5, 0x00, Twice);
 special_cmd_def!(INITIALISE_NO_ADDR, 0xa5, 0xff, Twice);
 special_cmd_def!(RANDOMISE, 0xa7, 0x00, Twice);
 special_cmd_def!(COMPARE, 0xa9, 0x00, Answer);
-                                             special_cmd_def!(WITHDRAW, 0xab, 0x00);
+special_cmd_def!(WITHDRAW, 0xab, 0x00);
 special_cmd_def!(PING, 0xad, 0x00);
 
 special_data_cmd_def!(SEARCHADDRH, 0xb1);

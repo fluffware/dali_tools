@@ -4,7 +4,7 @@ use dali_tools as dali;
 use tokio::time::Duration;
 
 extern crate clap;
-use clap::{value_parser, Arg, Command};
+use clap::{Arg, Command, value_parser};
 
 #[tokio::main]
 async fn main() {

@@ -1,5 +1,5 @@
 use crate as dali;
-use crate::common::commands::{Commands};
+use crate::common::commands::Commands;
 use crate::utils::long_address::set_search_addr;
 use dali::common::address::{Long, Short};
 use log::debug;
@@ -51,9 +51,8 @@ where
     commands.program_short_address(short).await?;
     let a = commands.query_short_address().await?;
     match a {
-	Some(a) if a == short => {},
-	Some(_) | None =>
-            return Err(Error::AddressValidation)
+        Some(a) if a == short => {}
+        Some(_) | None => return Err(Error::AddressValidation),
     }
     //println!("Set {}, got {}", short, (a>>1)+1);
     Ok(())
@@ -67,7 +66,7 @@ where
     program_short_address(commands, long, Short::new(0xff)).await?;
     let a = commands.query_short_address().await?;
     if !a.is_none() {
-            return Err(Error::AddressValidation)
+        return Err(Error::AddressValidation);
     }
     Ok(())
 }

@@ -17,11 +17,11 @@ use futures::future::{Fuse, FutureExt};
 use log::{debug, error, info};
 use std::future::Future;
 
-use hyper::{header, http};
 use hyper::{Body, Request, Response};
+use hyper::{header, http};
 use serde::Serializer;
 use serde_derive::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::Duration;
 
 use dali::common::address::Short;

@@ -45,7 +45,6 @@ impl DaliSendResult {
             e => Err(e),
         }
     }
- 
 }
 
 #[derive(Debug)]

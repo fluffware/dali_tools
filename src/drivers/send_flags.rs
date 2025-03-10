@@ -55,11 +55,7 @@ impl Flags {
     }
     pub fn priority(&self) -> u16 {
         let p = (self.bits() & PRIORITY_MASK) << PRIORITY_SHIFT;
-        if (1..=5).contains(&p) {
-            p
-        } else {
-            5
-        }
+        if (1..=5).contains(&p) { p } else { 5 }
     }
 }
 

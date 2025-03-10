@@ -309,17 +309,17 @@ pub struct Instance {
     pub event_filter: u32,
 }
 pub struct ControlInfo {
-pub    random_addr: Long,
-pub    short_addr: Short,
-pub    version: u8,
-pub    device_status: u8,
-pub    controller_error: u8,
-pub    device_error: u8,
-pub    operation_mode: u8,
-pub    manufacturer_specific_mode: u8,
-pub    device_groups: u32,
-pub    device_capabilities: u32,
-pub    instances: Vec<Instance>,
+    pub random_addr: Long,
+    pub short_addr: Short,
+    pub version: u8,
+    pub device_status: u8,
+    pub controller_error: u8,
+    pub device_error: u8,
+    pub operation_mode: u8,
+    pub manufacturer_specific_mode: u8,
+    pub device_groups: u32,
+    pub device_capabilities: u32,
+    pub instances: Vec<Instance>,
 }
 
 impl ControlInfo {

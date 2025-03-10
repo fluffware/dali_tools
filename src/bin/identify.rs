@@ -8,7 +8,7 @@ use dali::gear::cmd_defs as cmd;
 use dali_tools as dali;
 use std::error::Error;
 extern crate clap;
-use clap::{value_parser, Arg, Command};
+use clap::{Arg, Command, value_parser};
 
 const BIT_SEQ: [u16; 64] = [
     0x210, 0x211, 0x212, 0x213, 0x214, 0x215, 0x216, 0x217, 0x218, 0x219, 0x21a, 0x21b, 0x21c,

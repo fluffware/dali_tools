@@ -6,7 +6,8 @@ pub const DALI_RECV_FRAME: u8 = 5;
 pub const DALI_ERR_FRAMING: u8 = 10; // Received a frame with a framing error
 pub const DALI_ERR_BUS_LOW: u8 = 20; // The bus has been low for a long time
 pub const DALI_INFO_BUS_HIGH: u8 = 24; // The bus has returned to a high level
-                                       /* Failed to send a frame, including retries, due to bus activity. */
+
+/* Failed to send a frame, including retries, due to bus activity. */
 pub const DALI_ERR_BUS_BUSY: u8 = 30;
 /* Timeout when waiting for a backward frame */
 pub const DALI_NO_REPLY: u8 = 40;

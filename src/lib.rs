@@ -4,8 +4,8 @@ extern crate tokio;
 extern crate lazy_static;
 pub mod error;
 
-
 pub mod utils {
+    pub mod address_assignment;
     pub mod decode;
     pub mod device_info;
     pub mod discover;
@@ -13,17 +13,14 @@ pub mod utils {
     pub mod filtered_vec;
     pub mod long_address;
     pub mod memory_banks;
-    pub mod address_assignment;
 }
 
 pub mod drivers;
 
 pub mod common;
 
-pub mod gear;
 pub mod control;
-
-
+pub mod gear;
 
 #[cfg(feature = "httpd")]
 pub mod httpd;

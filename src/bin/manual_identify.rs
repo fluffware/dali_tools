@@ -646,12 +646,14 @@ async fn cmd_thread(
                 if let Some(addr) = addr  {
                     if let Err(e) = {
                         if current_high {
+                            current_high = false;
                             set_low_level(&driver,
                                           ctxt.low_level.load(Ordering::Relaxed),
                                           &Address::Short(Short::new(addr))).await
                         } else {
+                            current_high = true;
                             set_high_level(&driver,
-                       ctxt.high_level.load(Ordering::Relaxed),
+                                           ctxt.high_level.load(Ordering::Relaxed),
                                            &Address::Short(Short::new(addr))).await
                         }
                     } {
@@ -666,13 +668,14 @@ async fn cmd_thread(
 
                 if current_high {
             if let Some(addr) = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr)) {
-                        if let Err(e) =
-                            set_high_level(&driver,
-                                           ctxt.high_level.load(Ordering::Relaxed),
-                                           &Address::Short(Short::new(addr))).await {
-                                error!("Failed to set high level: {}",e);
-                            }
+                if let Err(e) =
+                    set_high_level(&driver,
+                                   ctxt.high_level.load(Ordering::Relaxed),
+                                   &Address::Short(Short::new(addr))).await {
+                        error!("Failed to set high level: {}",e);
                     }
+        current_high = true;
+            }
                 }
                 let (step_up,addr)  = ctxt.modify_state(|state| {
                     if state.current_gear < state.target_gear {
@@ -681,7 +684,7 @@ async fn cmd_thread(
                         (true, state.gears.get(state.current_gear).and_then(|g| g.old_addr))
                     } else {
                         state.current_gear -= 1;
-                        (true, state.gears.get(state.current_gear+1).and_then(|g| g.old_addr))
+                        (false, state.gears.get(state.current_gear+1).and_then(|g| g.old_addr))
                     }});
                 if let Some(addr) = addr {
                     if step_up {
@@ -690,6 +693,7 @@ async fn cmd_thread(
                                            ctxt.high_level.load(Ordering::Relaxed), &Address::Short(Short::new(addr))).await {
                                 error!("Failed to set high level: {}",e);
                             }
+            current_high = true;
                     } else {
                         if let Err(e) =
                             set_low_level(&driver,

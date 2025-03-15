@@ -25,3 +25,6 @@ pub mod pru;
 
 #[cfg(feature = "dali_rpi_driver")]
 pub mod dali_rpi;
+
+#[cfg(feature = "dummy_driver")]
+pub mod dummy;

@@ -9,6 +9,8 @@ use drivers::driver::add_driver;
 use drivers::helvar::helvar510;
 #[cfg(feature = "pru_driver")]
 use drivers::pru::pru_driver;
+#[cfg(feature = "dummy_driver")]
+use drivers::dummy::dummy;
 
 pub fn init() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(feature = "helvar510_driver")]
@@ -19,5 +21,7 @@ pub fn init() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     add_driver(pru_driver::driver_info());
     #[cfg(feature = "dali_rpi_driver")]
     add_driver(dali_rpi::driver_info());
+    #[cfg(feature = "dummy_driver")]
+    add_driver(dummy::driver_info());
     Ok(())
 }

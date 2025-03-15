@@ -10,6 +10,7 @@ dgw521_driver = ["tokio-serial"]
 simulator=[]
 pru_driver= []
 dali_rpi_driver= ["tokio-serial"]
+dummy_driver=[]
 httpd=["hyper","websocket-lite","hyper-websocket-lite", "bytes", "rust-embed"]
 
 [dependencies]

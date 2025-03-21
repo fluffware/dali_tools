@@ -6,7 +6,7 @@ edition = "2024"
 
 [features]
 helvar510_driver= ["libusb-async"]
-dgw521_driver = ["tokio-serial"]
+dgw521_driver = ["tokio-serial", "tokio-modbus"]
 simulator=[]
 pru_driver= []
 dali_rpi_driver= ["tokio-serial"]
@@ -21,7 +21,7 @@ tokio-stream = "0.1"
 clap = {version="4.4", features = ["derive"]}
 rand = "*"
 libusb-async = { git = "https://github.com/fluffware/libusb-rs-async.git", optional = true}
-tokio-modbus = {version="0.9", default-features = false, features=["rtu"]}
+tokio-modbus = {version="0.9", default-features = false, features=["rtu"], optional = true}
 tokio-serial = {version = "5.4", optional = true}
 lazy_static = "1"
 nix = "0.22"

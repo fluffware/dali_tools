@@ -170,9 +170,8 @@ pub struct DriverInfo {
     pub open: fn(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, OpenError>,
 }
 
-lazy_static! {
-    pub static ref DRIVERS: Mutex<Vec<DriverInfo>> = Mutex::new(Vec::new());
-}
+pub static DRIVERS:Mutex<Vec<DriverInfo>> = Mutex::new(Vec::new());
+
 
 /// Opens a driver instance with the given name and parameters
 ///
@@ -180,6 +179,7 @@ lazy_static! {
 ///
 /// * `name_params` - A string on the form <NAME> [':' <PARAM>=<VALUE> [',' <PARAM>=<VALUE>] ...]
 pub fn open(name_params: &str) -> Result<Box<dyn DaliDriver>, OpenError> {
+    super::init().unwrap();
     let mut param_map = HashMap::<String, String>::new();
     let name = if let Some((n, params)) = name_params.split_once(':') {
         let params = params.trim();
@@ -213,6 +213,7 @@ pub fn add_driver(info: DriverInfo) {
 }
 
 pub fn driver_names() -> Vec<String> {
+    super::init().unwrap();
     let mut names = Vec::new();
     let locked = DRIVERS.lock().unwrap();
     for d in locked.iter() {

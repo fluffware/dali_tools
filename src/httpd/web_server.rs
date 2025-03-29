@@ -1,21 +1,17 @@
 use crate::error::DynResult;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use futures_util::sink::SinkExt;
-use hyper::Method;
 use hyper::header;
 use hyper::http::StatusCode;
 use hyper::service::{make_service_fn, service_fn};
+use hyper::Method;
 use hyper::{Body, Request, Response, Server};
-use hyper_websocket_lite::AsyncClient;
 #[allow(unused_imports)]
 use log::{debug, error, info};
 use std::convert::Infallible;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, mpsc};
-use websocket_lite::{Message, Opcode};
 
 pub type BuildPage = Box<dyn FnMut(Request<Body>) -> DynResult<Response<Body>> + Send>;
 
@@ -27,7 +23,6 @@ pub struct ServerConfig {
     port: Option<u16>,
     build_page: Option<BuildPage>,
     web_resource: GetResurce,
-    ws: Option<(WsSender, WsReceiveChannel)>,
 }
 
 fn no_resource(_path: &str) -> DynResult<(&str, Bytes)> {
@@ -40,7 +35,6 @@ impl ServerConfig {
             port: None,
             build_page: None,
             web_resource: Box::new(no_resource),
-            ws: None,
         }
     }
 
@@ -63,50 +57,6 @@ impl ServerConfig {
         self
     }
 
-    pub fn web_socket(mut self, ws_send: WsSender, ws_receive: WsReceiveChannel) -> Self {
-        self.ws = Some((ws_send, ws_receive));
-        self
-    }
-}
-
-type WsSender = mpsc::Sender<Bytes>;
-type WsReceiver = broadcast::Receiver<Bytes>;
-type WsReceiveChannel = broadcast::Sender<Bytes>;
-
-pub async fn ws_client(mut client: AsyncClient, ws_send: WsSender, mut ws_receive: WsReceiver) {
-    info!("Connected WS");
-    loop {
-        tokio::select! {
-            res = client.next() => {
-                if let Some(msg) = res {
-                    if let Ok(msg) = msg {
-                        if msg.opcode() == Opcode::Text {
-                            if let Err(e) = ws_send.send(msg.into_data()).await {
-                                error!("Failed to send WS message to handler: {}",e)
-                            }
-                        }
-                    }
-                } else {
-                    break;
-                }
-            }
-            Ok(data) = ws_receive.recv() => {
-                match Message::new(Opcode::Text, data) {
-                    Ok(msg) => {
-                        if let Err(e) = client.send(msg).await {
-                            error!("Failed to send message to WS client: {}",e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to create message to WS client: {}",e);
-                    }
-                }
-
-
-            }
-        }
-    }
-    info!("Client disconnected")
 }
 
 async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult<Response<Body>> {
@@ -124,23 +74,6 @@ async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult
                         .body(Body::from(format!("No dynamic content")))
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
                 }
-            } else if path.starts_with("/socket/") {
-                let (ws_send, ws_receive) = {
-                    let mut conf = conf.lock().unwrap();
-                    if let Some((ws_send, ws_receive)) = &mut conf.ws {
-                        (ws_send.clone(), ws_receive.subscribe())
-                    } else {
-                        return Response::builder()
-                            .status(StatusCode::NOT_FOUND)
-                            .header(header::CONTENT_TYPE, "text/plain")
-                            .body(Body::from(format!("Web Socket not enabled")))
-                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
-                    }
-                };
-                hyper_websocket_lite::server_upgrade(req, |client| {
-                    ws_client(client, ws_send, ws_receive)
-                })
-                .await
             } else {
                 let (mime_type, data) = {
                     let mut conf = conf.lock().unwrap();

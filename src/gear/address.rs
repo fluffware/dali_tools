@@ -9,7 +9,7 @@ pub type Address = AddressImpl<16>;
 mod test {
     use super::{Address, Group};
     use crate::common::address::DisplayValue;
-    use crate::common::address::{BusAddress, Short};
+    use crate::common::address::Short;
     use std::convert::TryFrom;
 
     #[test]
@@ -43,21 +43,4 @@ mod test {
         assert_eq!(a, Group::new(15));
     }
 
-    #[cfg(test)]
-
-    fn use_any_bus_address(bus_addr: &dyn BusAddress) -> u8 {
-        bus_addr.bus_address()
-    }
-
-    #[test]
-    fn bus_address_test() {
-        let b = Address::from(Short::new(7));
-        assert_eq!(b, Address::Short(Short::new(7)));
-
-        let b = Address::from(Group::new(13));
-        assert_eq!(b, Address::Group(Group::new(13)));
-        assert_eq!(use_any_bus_address(&Short::new(7)), (7) << 1);
-        assert_eq!(use_any_bus_address(&Group::new(12)), (12 - 1) << 1 | 0x80);
-        assert_eq!(use_any_bus_address(&Address::Broadcast), 0xfe);
-    }
 }

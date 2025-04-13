@@ -24,3 +24,5 @@ pub mod gear;
 
 #[cfg(feature = "httpd")]
 pub mod httpd;
+
+pub mod light_control;

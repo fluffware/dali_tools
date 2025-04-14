@@ -2,45 +2,39 @@ use super::address_set::AddressSet;
 use super::colored_light::LightSequencePoint;
 use core::cmp::PartialOrd;
 use std::fmt::Debug;
+use super::timestamp::Timestamp;
 
-pub trait InstantOps {
-    type Duration;
-    fn is_near(&self, other: &Self, max: &Self::Duration) -> bool; // True if the difference is less than duration
+pub struct Sequencer<T> {
+    current: Vec<(AddressSet, LightSequencePoint<T>)>, // Sorted by time stamp
+    pending: Vec<(AddressSet, LightSequencePoint<T>)>, // Sorted by time stamp
 }
 
-pub struct Sequencer<Instant> {
-    current: Vec<(AddressSet, LightSequencePoint<Instant>)>, // Sorted by time stamp
-    pending: Vec<(AddressSet, LightSequencePoint<Instant>)>, // Sorted by time stamp
-}
-
-impl<Instant, Duration> Sequencer<Instant>
+impl<T> Sequencer<T>
 where
-    Instant: InstantOps + Ord + Copy + Debug + core::ops::Sub<Instant, Output = Duration>,
-    Duration: Ord + Copy,
+    T: Timestamp + PartialOrd + Copy + Debug,
+    T::Duration: Copy + PartialOrd,
 {
-    pub fn new() -> Sequencer<Instant> {
+    pub fn new() -> Sequencer<T> {
         Sequencer {
             current: Vec::new(),
             pending: Vec::new(),
         }
     }
 
-    pub fn pending(&self) -> &[(AddressSet, LightSequencePoint<Instant>)] {
+    pub fn pending(&self) -> &[(AddressSet, LightSequencePoint<T>)] {
         &self.pending
     }
 
     pub fn add_sequence(
         &mut self,
         addrs: AddressSet,
-        light: &[LightSequencePoint<Instant>],
-        merge_limit: Duration,
+        light: &[LightSequencePoint<T>],
+        merge_limit: T::Duration,
     ) {
         if light.is_empty() {
             return;
         }
 
-        let mut pending_index = 0;
-        let mut light_index = 0;
 
         // Find the first pending point after the start of the new sequence
         let pending = &mut self.pending;
@@ -63,7 +57,7 @@ where
 
         let mut prev = None;
         let mut next = 0;
-        'light_loop: for l in light {
+        for l in light {
             while next < pending.len() && l.when >= pending[next].1.when {
                 prev = Some(next);
                 next += 1;
@@ -94,9 +88,9 @@ where
         }
     }
 
-    fn update(&mut self, now: Instant) {}
+    fn update(&mut self, now: T) {}
 
-    fn next_update(&self) -> Option<Instant> {
+    fn next_update(&self) -> Option<T> {
         None
     }
 }
@@ -107,18 +101,15 @@ mod test {
         address_set::AddressSet,
         colored_light::{ColoredLight, LightSequencePoint, LightValue},
     };
-    use super::{InstantOps, Sequencer};
-    type Instant = i32; // ms
+    use super::{Timestamp as TimestampTrait, Sequencer};
+    type Timestamp = i32; // ms
     type Duration = i32; //ms
     const NEAR_LIMIT: i32 = 200;
-    impl InstantOps for Instant {
+    impl TimestampTrait for Timestamp {
         type Duration = Duration;
-        fn is_near(&self, other: &Instant, limit: &Duration) -> bool {
-            (self - other).abs() <= *limit
-        }
     }
 
-    fn check_seq(seq: &Sequencer<Instant>, expected: &[(Instant, f32, &[u8])]) {
+    fn check_seq(seq: &Sequencer<Timestamp>, expected: &[(Timestamp, f32, &[u8])]) {
         let pending = seq.pending();
         assert_eq!(
             pending.len(),
@@ -138,7 +129,7 @@ mod test {
         }
     }
 
-    fn add_seq(seq: &mut Sequencer<Instant>, addrs: &[u8], lights: &[(Instant, f32)]) {
+    fn add_seq(seq: &mut Sequencer<Timestamp>, addrs: &[u8], lights: &[(Timestamp, f32)]) {
         seq.add_sequence(
             AddressSet::from_slice(addrs),
             &lights
@@ -150,16 +141,14 @@ mod test {
                         color: ColoredLight::None,
                     },
                 })
-                .collect::<Vec<LightSequencePoint<Instant>>>(),
+                .collect::<Vec<LightSequencePoint<Timestamp>>>(),
             NEAR_LIMIT,
         );
     }
 
     #[test]
     fn test_add_sequence() {
-        let mut seq = Sequencer::<Instant>::new();
-        let a_set = AddressSet::from_slice(&[3, 6]);
-        let b_set = AddressSet::from_slice(&[3, 5]);
+        let mut seq = Sequencer::<Timestamp>::new();
         add_seq(&mut seq, &[3, 6], &[(900, 12.4)]);
         check_seq(&seq, &[(900, 12.4, &[3, 6])]);
 

@@ -38,7 +38,7 @@ pub struct Short(u8);
 impl Short {
     const DISPLAY_RANGE: RangeInclusive<u8> = 1..=64;
     pub fn new(a: u8) -> Short {
-        assert!(a < 64);
+        assert!(a < 64 || a == 0xff);
         Short(a)
     }
 
@@ -49,7 +49,7 @@ impl Short {
         let Ok(a) = a.try_into() else {
             return Err(AddressError::InvalidAddress);
         };
-        if !(1u8..64u8).contains(&a) {
+        if !(1u8..=64u8).contains(&a) {
             return Err(AddressError::InvalidAddress);
         }
         Ok(a - Self::DISPLAY_RANGE.start())

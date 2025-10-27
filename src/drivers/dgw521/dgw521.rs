@@ -1,7 +1,8 @@
 use crate::drivers;
 use crate::utils::dyn_future::DynFuture;
 use drivers::driver::{
-    DaliBusEventResult, DaliDriver, DaliFrame, DaliSendResult, DriverInfo, OpenError,
+    DaliBusEvent, DaliBusEventResult, DaliBusEventType, DaliDriver, DaliFrame, DaliSendResult,
+    DriverInfo, OpenError,
 };
 use drivers::send_flags::Flags;
 use drivers::utils::{DALIcmd, DALIreq};
@@ -12,9 +13,10 @@ use std::future::Future;
 use std::pin::Pin;
 //use std::sync::Arc;
 //use std::sync::Mutex;
+use crate::futures::FutureExt;
 use futures::executor::block_on;
-use log::warn;
-use std::collections::VecDeque;
+use log::{debug, warn};
+use std::ops::{AddAssign, Sub};
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, error::TryRecvError};
@@ -22,10 +24,11 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio::time::timeout;
-use tokio_modbus::client::rtu;
+use tokio_modbus::client::{Context, rtu};
 use tokio_modbus::prelude::*;
 use tokio_modbus::slave::Slave;
 use tokio_serial::{Parity, SerialStream};
+use std::time::Instant as StdInstant;
 
 #[allow(dead_code)]
 mod mb {
@@ -71,6 +74,9 @@ mod mb {
     pub const DALI_CMD_8: u16 = 39;
 
     pub const CMD_STATUS_MASK: u16 = 256;
+
+    pub const MONITOR_BUFFER_INDEX: u16 = 322;
+    pub const MONITOR_BUFFER_START: u16 = 1024;
 }
 
 #[derive(Debug)]
@@ -116,123 +122,290 @@ impl fmt::Display for DriverError {
     }
 }
 
-const MB_TIMEOUT: Duration = Duration::from_millis(1000);
-async fn driver_thread(
-    serial: SerialStream,
-    mut recv: mpsc::Receiver<DALIreq>,
-) -> Result<(), DriverError> {
-    let mut ctxt = rtu::attach_slave(serial, Slave::from(1));
-    let mut queue = VecDeque::<DALIreq>::new();
-    let mut oldest_slot = 0;
-    let mut next_slot = 0;
-    'outer: loop {
-        let mask = match timeout(
+#[derive(Debug, Copy, Clone)]
+
+struct SlotIndex(u16);
+
+impl SlotIndex {
+    pub fn new(s: u16) -> Self {
+        SlotIndex(s)
+    }
+
+    pub fn slot(&self) -> usize {
+        (self.0 as usize) & 7
+    }
+
+    pub fn mask(&self) -> u16 {
+        1 << (self.0 & 7)
+    }
+}
+
+impl AddAssign<u16> for SlotIndex {
+    fn add_assign(&mut self, b: u16) {
+        self.0 = self.0.wrapping_add(b);
+    }
+}
+
+impl Sub<SlotIndex> for SlotIndex {
+    type Output = u16;
+    fn sub(self, b: SlotIndex) -> u16 {
+        self.0.wrapping_sub(b.0)
+    }
+}
+
+struct SendState {
+    pending: [Option<DALIreq>; 8],
+    oldest_slot: SlotIndex,
+    next_slot: SlotIndex,
+}
+impl SendState {
+    pub fn new() -> Self {
+        SendState {
+            pending: [None, None, None, None, None, None, None, None],
+            oldest_slot: SlotIndex::new(0),
+            next_slot: SlotIndex::new(0),
+        }
+    }
+
+    async fn send(&mut self, recv: &mut mpsc::Receiver<DALIreq>, ctxt: &mut Context, req: DALIreq) {
+        let mut pending = Some(req);
+        'sending: loop {
+            let mask = match timeout(
+                MB_TIMEOUT,
+                ctxt.read_input_registers(mb::CMD_STATUS_MASK, 1),
+            )
+            .await
+            {
+                Ok(Ok(regs)) => regs[0],
+                Ok(Err(_e)) => {
+                    continue 'sending;
+                }
+
+                Err(_e) => {
+                    warn!("Modbus timeout");
+                    continue 'sending;
+                }
+            };
+            /*            println!(
+                            "Mask: {:08b}, Oldest slot: {:?}, Next slot: {:?}",
+                            mask, self.oldest_slot, self.next_slot
+                        );
+            */
+            // Handle slots that are finished
+            while self.next_slot - self.oldest_slot != 0 && (self.oldest_slot.mask() & mask) != 0 {
+                let slot = self.oldest_slot.slot();
+                let Some(req) = self.pending[slot].take() else {
+                    warn!("No request for slot");
+                    self.oldest_slot += 1;
+                    continue;
+                };
+                self.oldest_slot += 1;
+                let res = match timeout(
+                    MB_TIMEOUT,
+                    ctxt.read_input_registers(mb::CMD_STATUS_1 + slot as u16, 1),
+                )
+                .await
+                {
+                    Ok(Ok(regs)) => regs[0],
+                    Ok(Err(e)) => {
+                        send_driver_error(req, e);
+                        continue 'sending;
+                    }
+                    Err(e) => {
+                        send_driver_error(req, e);
+                        warn!("Modbus timeout");
+                        continue 'sending;
+                    }
+                };
+                req.reply
+                    .send(match res & 0xff {
+                        mb::CMD_STATUS_EXECUTING | mb::CMD_STATUS_PENDING => {
+                            DaliSendResult::DriverError("Command not finished".into())
+                        }
+                        mb::CMD_STATUS_NO_ANSWER => {
+                            if req.cmd.flags.expect_answer() {
+                                DaliSendResult::Answer((res >> 8) as u8)
+                            } else {
+                                DaliSendResult::Ok
+                            }
+                        }
+                        mb::CMD_STATUS_INVALID_DATA => DaliSendResult::Framing,
+                        mb::CMD_STATUS_EARLY | mb::CMD_STATUS_TIMEOUT => DaliSendResult::Timeout,
+                        mb::CMD_STATUS_ANSWER => DaliSendResult::Answer((res >> 8) as u8),
+                        _ => DaliSendResult::DriverError("Unknown status".into()),
+                    })
+                    .unwrap();
+            }
+
+            // Try filling empty slots with commands
+            while self.next_slot - self.oldest_slot < 8
+                && (self.next_slot.mask() & mask) != 0
+                && let Some(req) = pending.take()
+            {
+                if let DaliFrame::Frame16(frame) = req.cmd.data {
+                    match timeout(
+                        MB_TIMEOUT,
+                        ctxt.write_single_register(
+                            mb::DALI_CMD_1 + self.next_slot.slot() as u16,
+                            u16::from_be_bytes(frame),
+                        ),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            send_driver_error(req, e);
+                            continue 'sending;
+                        }
+                        Err(e) => {
+                            send_driver_error(req, e);
+                            continue 'sending;
+                        }
+                    };
+                    self.pending[self.next_slot.slot()] = Some(req);
+                    //println!("Sent {}", next_slot);
+                } else {
+                    req.reply
+                        .send(DaliSendResult::DriverError(
+                            "Only 16 bit frames supported".into(),
+                        ))
+                        .unwrap();
+                }
+                self.next_slot += 1;
+
+                pending = match recv.try_recv() {
+                    Ok(req) => Some(req),
+                    Err(e) => match e {
+                        TryRecvError::Empty => None,
+                        TryRecvError::Disconnected => None,
+                    },
+                };
+            }
+            if self.next_slot - self.oldest_slot == 0 {
+                break 'sending;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        debug!("Send done");
+    }
+}
+
+struct MonitorState {
+    last_index: u16,
+    last_ts: StdInstant,
+}
+
+impl MonitorState {
+    pub fn new() -> Self {
+        MonitorState {
+            last_index: 0,
+            last_ts: StdInstant::now(),
+        }
+    }
+}
+
+impl MonitorState {
+    async fn check_events(&mut self, notify: &mut mpsc::Sender<DaliBusEvent>, ctxt: &mut Context) {
+        let index = match timeout(
             MB_TIMEOUT,
-            ctxt.read_input_registers(mb::CMD_STATUS_MASK, 1),
+            ctxt.read_input_registers(mb::MONITOR_BUFFER_INDEX, 1),
         )
         .await
         {
             Ok(Ok(regs)) => regs[0],
             Ok(Err(e)) => {
-                if let Some(req) = queue.pop_front() {
-                    oldest_slot = (oldest_slot + 1) & 7;
-                    send_driver_error(req, e);
-                }
-                continue 'outer;
+                warn!("Modbus error: {}", e);
+                return;
             }
 
-            Err(e) => {
-                if let Some(req) = queue.pop_front() {
-                    oldest_slot = (oldest_slot + 1) & 7;
-                    send_driver_error(req, e);
-                }
+            Err(_e) => {
                 warn!("Modbus timeout");
-                continue 'outer;
+                return;
             }
-        };
-        //println!("{:08b} {} - {}", mask, oldest_slot, next_slot);
-        while oldest_slot != next_slot && ((1 << oldest_slot) & mask) != 0 {
-            let req = queue.pop_front().unwrap();
-            let slot = oldest_slot;
-            oldest_slot = (oldest_slot + 1) & 7;
-            let res = match timeout(
+        }
+        .wrapping_add(1);
+
+        let mut read_len = index.wrapping_sub(self.last_index);
+        if read_len > 0 {
+            if read_len > 31 {
+                read_len = 31;
+                self.last_index = index.wrapping_sub(31);
+            }
+            let read_index = self.last_index % 32;
+            if read_len > 32 - read_index {
+                read_len = 32 - read_index;
+            }
+            match timeout(
                 MB_TIMEOUT,
-                ctxt.read_input_registers(mb::CMD_STATUS_1 + slot, 1),
+                ctxt.read_input_registers(mb::MONITOR_BUFFER_START + 2 * read_index, 2 * read_len),
             )
             .await
             {
-                Ok(Ok(regs)) => regs[0],
-                Ok(Err(e)) => {
-                    send_driver_error(req, e);
-                    continue 'outer;
-                }
-                Err(e) => {
-                    send_driver_error(req, e);
-                    continue 'outer;
-                }
-            };
-            //println!("Status {:04x} @{}", res, slot);
-            req.reply
-                .send(match res & 0xff {
-                    mb::CMD_STATUS_EXECUTING | mb::CMD_STATUS_PENDING => {
-                        DaliSendResult::DriverError("Command not finished".into())
-                    }
-                    mb::CMD_STATUS_NO_ANSWER => {
-                        if req.cmd.flags.expect_answer() {
-                            DaliSendResult::Answer((res >> 8) as u8)
+                Ok(Ok(regs)) => {
+                    for i in 0..read_len {
+                        let info = regs[(i * 2 + 1) as usize];
+                        let rel_ts = info >> 6;
+                        if rel_ts >= 999 {
+                            self.last_ts = StdInstant::now();
                         } else {
-                            DaliSendResult::Ok
+                            self.last_ts += Duration::from_millis(rel_ts as u64);
                         }
+
+                        let event_type = if info & 0x06 != 0 {
+                            DaliBusEventType::FramingError
+                        } else {
+                            if info & 0x08 != 0 {
+                                DaliBusEventType::Frame16(u16::to_be_bytes(regs[(i * 2) as usize]))
+                            } else {
+                                DaliBusEventType::Frame8((regs[(i * 2) as usize] & 0xff) as u8)
+                            }
+                        };
+                        let _ = notify.try_send(DaliBusEvent {
+                            timestamp: self.last_ts,
+                            event_type,
+                        });
                     }
-                    mb::CMD_STATUS_INVALID_DATA => DaliSendResult::Framing,
-                    mb::CMD_STATUS_EARLY | mb::CMD_STATUS_TIMEOUT => DaliSendResult::Timeout,
-                    mb::CMD_STATUS_ANSWER => DaliSendResult::Answer((res >> 8) as u8),
-                    _ => DaliSendResult::DriverError("Unknown status".into()),
-                })
-                .unwrap();
-        }
-        // Try filling empty slots with commands
-        'add: while ((1 << next_slot) & mask) != 0 {
-            let req = match recv.try_recv() {
-                Ok(req) => req,
-                Err(e) => match e {
-                    TryRecvError::Empty => break 'add,
-                    TryRecvError::Disconnected => break 'outer,
-                },
+                }
+                Ok(Err(e)) => {
+                    warn!("Modbus error: {}", e);
+                    return;
+                }
+
+                Err(_e) => {
+                    warn!("Modbus timeout");
+                    return;
+                }
             };
-            if let DaliFrame::Frame16(frame) = req.cmd.data {
-                match timeout(
-                    MB_TIMEOUT,
-                    ctxt.write_single_register(
-                        mb::DALI_CMD_1 + next_slot,
-                        u16::from_be_bytes(frame),
-                    ),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        send_driver_error(req, e);
-                        continue 'outer;
-                    }
-                    Err(e) => {
-                        send_driver_error(req, e);
-                        continue 'outer;
-                    }
-                };
-                queue.push_back(req);
-                //println!("Sent {}", next_slot);
-            } else {
-                req.reply
-                    .send(DaliSendResult::DriverError(
-                        "Only 16 bit frames supported".into(),
-                    ))
-                    .unwrap();
-            }
-            next_slot = (next_slot + 1) & 7;
+
+            self.last_index = self.last_index.wrapping_add(read_len);
+
         }
     }
-    println!("Driver exited");
+}
+
+const MB_TIMEOUT: Duration = Duration::from_millis(1000);
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
+async fn driver_thread(
+    serial: SerialStream,
+    mut recv: mpsc::Receiver<DALIreq>,
+    mut monitor: mpsc::Sender<DaliBusEvent>,
+) -> Result<(), DriverError> {
+    debug!("driver_thread");
+    let mut ctxt = rtu::attach_slave(serial, Slave::from(1));
+    let mut send_state = SendState::new();
+    let mut monitor_state = MonitorState::new();
+    loop {
+        match timeout(POLL_INTERVAL, recv.recv()).await {
+            Ok(Some(req)) => {
+                send_state.send(&mut recv, &mut ctxt, req).await;
+            }
+            Ok(None) => break,
+            Err(_) => {
+                monitor_state.check_events(&mut monitor, &mut ctxt).await;
+            }
+        }
+    }
+    debug!("Driver exited");
     Ok(())
 }
 
@@ -240,20 +413,21 @@ pub struct Dgw521Driver {
     join: Option<JoinHandle<Result<(), DriverError>>>,
     // Needs to be an option so that it can be dropped to signal the receiver
     send_cmd: Option<mpsc::Sender<DALIreq>>,
-    //    _send_monitor: Arc<Mutex<Option<mpsc::Sender<DaliBusEvent>>>>,
+    recv_monitor: Option<mpsc::Receiver<DaliBusEvent>>,
 }
 impl Dgw521Driver {
     fn new(port: &str, baud_rate: u32, parity: Parity) -> Result<Dgw521Driver, DriverError> {
-        let (tx, rx) = mpsc::channel::<DALIreq>(10);
+        let (tx_cmd, rx_cmd) = mpsc::channel::<DALIreq>(10);
+        let (tx_monitor, rx_monitor) = mpsc::channel::<DaliBusEvent>(10);
         let serial = match SerialStream::open(&tokio_serial::new(port, baud_rate).parity(parity)) {
             Ok(s) => s,
             Err(e) => return Err(DriverError::SerialError(e)),
         };
-        let join = tokio::spawn(driver_thread(serial, rx));
+        let join = tokio::spawn(driver_thread(serial, rx_cmd, tx_monitor));
         let driver = Dgw521Driver {
             join: Some(join),
-            send_cmd: Some(tx),
-            //_send_monitor: monitor,
+            send_cmd: Some(tx_cmd),
+            recv_monitor: Some(rx_monitor),
         };
         Ok(driver)
     }
@@ -292,15 +466,21 @@ impl DaliDriver for Dgw521Driver {
         }
     }
 
-    fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
-        Box::pin(std::future::ready(Err("Not implemented".into())))
+    fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult> {
+        let Some(recv) = &mut self.recv_monitor else {
+            return Box::pin(std::future::ready(Err("No queue".into())));
+        };
+        Box::pin(
+            recv.recv()
+                .map(|r| r.ok_or_else(|| "Channel closed".into())),
+        )
     }
 
     fn current_timestamp(&self) -> std::time::Instant {
         Instant::now().into_std()
     }
 
-    fn wait_until(&self, end: std::time::Instant) -> DynFuture<()> {
+    fn wait_until(&self, end: std::time::Instant) -> DynFuture<'_, ()> {
         Box::pin(tokio::time::sleep_until(Instant::from(end)))
     }
 }

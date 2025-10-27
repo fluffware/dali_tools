@@ -10,6 +10,7 @@ use clap::{Arg, Command, value_parser};
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     if let Err(e) = dali::drivers::init() {
         println!("Failed to initialize DALI drivers: {}", e);
     }

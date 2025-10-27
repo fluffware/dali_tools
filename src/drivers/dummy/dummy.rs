@@ -30,8 +30,8 @@ impl DaliDriver for DummyDriver {
                 } else if flags.expect_answer() {
                     buf += "A ";
                 } else {
-		    buf += "  ";
-		}
+                    buf += "  ";
+                }
                 match cmd {
                     DaliFrame::Frame24(frame) => {
                         buf += &format!("{:02x} {:02x} {:02x}", frame[0], frame[1], frame[2])
@@ -66,7 +66,7 @@ impl DaliDriver for DummyDriver {
         })
     }
 
-    fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
+    fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult> {
         Box::pin(std::future::pending())
     }
 
@@ -74,7 +74,7 @@ impl DaliDriver for DummyDriver {
         Instant::now()
     }
 
-    fn wait_until(&self, end: std::time::Instant) -> DynFuture<()> {
+    fn wait_until(&self, end: std::time::Instant) -> DynFuture<'_, ()> {
         Box::pin(tokio::time::sleep_until(end.into()))
     }
 }
@@ -91,7 +91,7 @@ fn driver_open(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, O
                     return Err(OpenError::ParameterError(format!(
                         "Failed to log open file {}: {}",
                         filename, e
-                    )))
+                    )));
                 }
             }
         }

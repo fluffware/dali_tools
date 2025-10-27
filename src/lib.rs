@@ -1,7 +1,6 @@
 extern crate futures;
-extern crate tokio;
-#[macro_use]
 extern crate lazy_static;
+extern crate tokio;
 pub mod error;
 
 pub mod utils {
@@ -13,6 +12,7 @@ pub mod utils {
     pub mod filtered_vec;
     pub mod long_address;
     pub mod memory_banks;
+    pub mod address_set;
 }
 
 pub mod drivers;

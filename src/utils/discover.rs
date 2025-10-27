@@ -1,11 +1,11 @@
+use crate::common::address::Long;
+use crate::common::address::Short;
 use crate::common::commands::{Commands, ErrorInfo, YesNo};
 use crate::common::driver_commands::DriverCommands;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::send_flags::PRIORITY_1;
-
-use crate::common::address::Long;
-use crate::common::address::Short;
 use crate::utils::long_address;
+use log::debug;
 use std::error::Error;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -158,7 +158,7 @@ where
     let mut found_short = 0u64;
 
     let search_res: Result<u32, C::Error> = loop {
-        println!("Searching {:06x} - {:06x}", low, high);
+        debug!("Searching {:06x} - {:06x}", low, high);
         match find_device(
             commands,
             low,
@@ -262,7 +262,7 @@ where
 }
 
 /// Addresses of devices discovered on the bus.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Discovered {
     /// Random address for device. None if there's conflicting short addresses or the device doesn't report a random address.
     pub long: Option<Long>,

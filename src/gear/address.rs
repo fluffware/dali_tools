@@ -42,5 +42,4 @@ mod test {
         let a = Group::try_from(b).unwrap();
         assert_eq!(a, Group::new(15));
     }
-
 }

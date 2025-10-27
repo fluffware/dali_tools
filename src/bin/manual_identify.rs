@@ -521,12 +521,14 @@ fn decode_get_request(
     }
 }
 
+/*
 #[derive(Serialize, Deserialize)]
 enum DaliSetIntensity {
     Intensity(u8),
     Low(bool),
     High(bool),
 }
+ */
 
 #[derive(Clone, Debug)]
 enum DaliCommands {

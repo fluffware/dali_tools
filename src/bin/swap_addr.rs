@@ -7,6 +7,7 @@ use dali::gear::commands_102::Commands102;
 use dali::utils::address_assignment;
 use dali_tools as dali;
 use dali_tools::common::driver_commands::DriverCommands;
+use log::debug;
 
 extern crate clap;
 use clap::{Arg, Command as ClapCommand, value_parser};
@@ -24,14 +25,27 @@ where
         Err(DaliSendResult::Timeout) => None,
         Err(e) => return Err(e.into()),
     };
-    println!("{}: 0x{:?}", addr1, long1);
+    println!(
+        "{}: {}",
+        addr1,
+        long1
+            .map(|x| { format!("0x{x:06x}") })
+            .unwrap_or_else(|| "-".to_string())
+    );
     let long2 = match commands.query_random_address(addr2).await {
         Ok(a) => Some(a),
         Err(DaliSendResult::Timeout) => None,
         Err(e) => return Err(e.into()),
     };
-    println!("{}: 0x{:?}", addr2, long2);
+    println!(
+        "{}: {}",
+        addr2,
+        long2
+            .map(|x| { format!("0x{x:06x}") })
+            .unwrap_or_else(|| "-".to_string())
+    );
     commands.initialise_all().await?;
+    debug!("initialise_all done");
     if let Some(l) = long1 {
         address_assignment::program_short_address(commands, l, addr2).await?;
     }

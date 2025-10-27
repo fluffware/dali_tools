@@ -38,7 +38,7 @@ pub struct Short(u8);
 impl Short {
     const DISPLAY_RANGE: RangeInclusive<u8> = 1..=64;
     pub fn new(a: u8) -> Short {
-        assert!(a < 64 || a == 0xff);
+        assert!(a < 64);
         Short(a)
     }
 
@@ -49,7 +49,7 @@ impl Short {
         let Ok(a) = a.try_into() else {
             return Err(AddressError::InvalidAddress);
         };
-        if !(1u8..=64u8).contains(&a) {
+        if !Self::DISPLAY_RANGE.contains(&a) {
             return Err(AddressError::InvalidAddress);
         }
         Ok(a - Self::DISPLAY_RANGE.start())
@@ -106,6 +106,18 @@ impl Into<AddressByte> for Short {
         AddressByte((self.0 << 1) | 1)
     }
 }
+
+impl Into<AddressByte> for Option<Short> {
+    fn into(self) -> AddressByte {
+	if let Some(addr) = self {
+            addr.into()
+	} else {
+	    AddressByte(0xff)
+	}
+    }
+}
+
+
 
 impl DisplayValue for Short {
     fn display_value(&self) -> u8 {

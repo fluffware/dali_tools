@@ -29,6 +29,6 @@ where
 {
     commands.searchaddr_h((addr >> 16 & 0xff) as u8).await?;
     commands.searchaddr_m((addr >> 8 & 0xff) as u8).await?;
-    commands.searchaddr_l((addr >> 16 & 0xff) as u8).await?;
+    commands.searchaddr_l((addr & 0xff) as u8).await?;
     Ok(())
 }

@@ -1,23 +1,24 @@
 #[derive(PartialEq, Clone, Debug)]
+
+/// Color and intensity of light
 pub struct LightValue {
     pub power: f32, // 0 - 100%
     pub color: ColoredLight,
 }
 
+/// Color of light
 #[derive(PartialEq, Clone, Debug)]
 pub enum ColoredLight {
-    None,
+    None, // Fixed color, normally white
     ColorTemp { kelvin: u32 },
     Coordinate { x: f32, y: f32 }, // CIE 1931 color coordinates
 }
-
+/// Light value at a specific time
 #[derive(Clone, Debug)]
-pub struct LightSequencePoint<Instant = std::time::Instant>
-{
+pub struct LightSequencePoint<Instant = std::time::Instant> {
     pub when: Instant,
     pub value: LightValue,
 }
-
 
 // Algorithm from:
 // Bongsoon Kang; Ohak Moon; Changhee Hong; Honam Lee; Bonghwan Cho; Youngsun Kim (December 2002).
@@ -42,6 +43,5 @@ pub fn cct_to_xy(kelvin: u32) -> (f32, f32) {
     } else {
         3.0817580 * x3 - 5.8733867 * x2 + 3.75112997 * x - 0.37001483
     };
-    (x,y)
+    (x, y)
 }
-

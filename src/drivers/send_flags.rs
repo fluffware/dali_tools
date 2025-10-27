@@ -73,10 +73,9 @@ impl std::ops::BitOr<Flags> for Flags {
         Combined(masked | other.bits())
     }
 }
-impl std::ops::BitOrAssign<Flags> for Flags
-{
+impl std::ops::BitOrAssign<Flags> for Flags {
     fn bitor_assign(&mut self, other: Flags) {
-	let b = self.bits();
+        let b = self.bits();
         let masked = match other {
             Empty => b,
             Priority(_) => b & !PRIORITY_MASK,
@@ -84,6 +83,6 @@ impl std::ops::BitOrAssign<Flags> for Flags
             ExpectAnswer(_) => b & !EXPECT_ANSWER_BIT,
             Combined(_) => b,
         };
-	*self = Combined(masked | other.bits());
+        *self = Combined(masked | other.bits());
     }
 }

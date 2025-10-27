@@ -1,10 +1,9 @@
 use crate::error::DynResult;
 use bytes::Bytes;
-use futures_util::StreamExt;
+use hyper::Method;
 use hyper::header;
 use hyper::http::StatusCode;
 use hyper::service::{make_service_fn, service_fn};
-use hyper::Method;
 use hyper::{Body, Request, Response, Server};
 #[allow(unused_imports)]
 use log::{debug, error, info};
@@ -56,7 +55,6 @@ impl ServerConfig {
         self.web_resource = resource;
         self
     }
-
 }
 
 async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult<Response<Body>> {

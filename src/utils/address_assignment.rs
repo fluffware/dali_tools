@@ -1,5 +1,6 @@
 use crate as dali;
 use crate::common::commands::Commands;
+use crate::common::commands::ErrorInfo;
 use crate::utils::long_address::set_search_addr;
 use dali::common::address::{Long, Short};
 use log::debug;
@@ -46,9 +47,9 @@ pub async fn program_short_address<C>(
 where
     C: Commands,
 {
-    debug!("{} set address {}", long, short);
+    debug!("{} set address {:?}", long, short);
     set_search_addr(commands, long).await?;
-    commands.program_short_address(short).await?;
+    commands.program_short_address(Some(short)).await?;
     let a = commands.query_short_address().await?;
     match a {
         Some(a) if a == short => {}
@@ -63,7 +64,8 @@ where
     C: Commands,
 {
     debug!("Clearing {}", long);
-    program_short_address(commands, long, Short::new(0xff)).await?;
+    set_search_addr(commands, long).await?;
+    commands.program_short_address(None).await?;
     let a = commands.query_short_address().await?;
     if !a.is_none() {
         return Err(Error::AddressValidation);
@@ -94,8 +96,16 @@ where
             old_map.insert(old, long_old);
         }
         if !old_map.contains_key(new) {
-            let long_new = commands.query_random_address(*new).await?;
-            old_map.insert(new, long_new);
+            match commands.query_random_address(*new).await {
+                Ok(long_new) => {
+                    old_map.insert(new, long_new);
+                }
+                Err(e) => {
+                    if !e.is_timeout() {
+                        return Err(e.into());
+                    }
+                }
+            }
         }
     }
     commands.initialise_all().await?;
@@ -111,7 +121,7 @@ where
         }
     }
 
-    // Assing unused addresses
+    // Assign unused addresses
     for (long, new) in std::iter::zip(old_map.values(), old_set) {
         program_short_address(commands, *long, *new).await?;
     }

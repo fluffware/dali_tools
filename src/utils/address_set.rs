@@ -1,5 +1,6 @@
-use core::ops::Range;
+use core::ops::RangeInclusive;
 use core::ops::{Add, AddAssign, Sub, SubAssign};
+use crate::common::address::Short;
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct AddressSet(u64);
@@ -9,19 +10,19 @@ impl AddressSet {
         AddressSet(0)
     }
 
-    pub fn from_slice(addrs: &[u8]) -> AddressSet {
+    pub fn from_slice(addrs: &[Short]) -> AddressSet {
         let mut s = 0u64;
         for addr in addrs {
-            s |= 1 << addr;
+            s |= 1 << addr.value();
         }
         AddressSet(s)
     }
 
-    pub fn to_vec(&self) -> Vec<u8> {
+    pub fn to_vec(&self) -> Vec<Short> {
         (0..64)
             .filter_map(|b| {
                 if (self.0 & 1 << b) != 0 {
-                    Some(b)
+                    Some(Short::new(b))
                 } else {
                     None
                 }
@@ -29,12 +30,12 @@ impl AddressSet {
             .collect()
     }
 
-    pub fn from_range(addrs: Range<u8>) -> AddressSet {
+    pub fn from_range(addrs: RangeInclusive<Short>) -> AddressSet {
         if addrs.is_empty() {
             return AddressSet(0);
         }
-        let start_bit = 1u64 << addrs.start;
-        let end_bit = 1u64 << addrs.end - 1;
+        let start_bit = 1u64 << addrs.start().value();
+        let end_bit = 1u64 << addrs.end().value();
         let s = !(start_bit - 1) & ((end_bit - 1) + end_bit);
         AddressSet(s)
     }
@@ -42,18 +43,22 @@ impl AddressSet {
     pub fn is_empty(&self) -> bool {
         self.0 == 0
     }
-}
 
-impl Add<u8> for AddressSet {
-    type Output = AddressSet;
-    fn add(self, b: u8) -> Self::Output {
-        Self(self.0 | (1u64 << b))
+    pub fn contains(&self, addr: Short) -> bool {
+	(self.0 & (1<< addr.value())) != 0
     }
 }
 
-impl AddAssign<u8> for AddressSet {
-    fn add_assign(&mut self, b: u8) {
-        self.0 |= 1u64 << b;
+impl Add<Short> for AddressSet {
+    type Output = AddressSet;
+    fn add(self, b: Short) -> Self::Output {
+        Self(self.0 | (1u64 << b.value()))
+    }
+}
+
+impl AddAssign<Short> for AddressSet {
+    fn add_assign(&mut self, b: Short) {
+        self.0 |= 1u64 << b.value();
     }
 }
 
@@ -77,16 +82,16 @@ impl AddAssign<&AddressSet> for AddressSet {
     }
 }
 
-impl Sub<u8> for AddressSet {
+impl Sub<Short> for AddressSet {
     type Output = AddressSet;
-    fn sub(self, b: u8) -> Self::Output {
-        Self(self.0 & !(1u64 << b))
+    fn sub(self, b: Short) -> Self::Output {
+        Self(self.0 & !(1u64 << b.value()))
     }
 }
 
-impl SubAssign<u8> for AddressSet {
-    fn sub_assign(&mut self, b: u8) {
-        self.0 &= !(1u64 << b);
+impl SubAssign<Short> for AddressSet {
+    fn sub_assign(&mut self, b: Short) {
+        self.0 &= !(1u64 << b.value());
     }
 }
 
@@ -119,37 +124,36 @@ impl SubAssign<&AddressSet> for AddressSet {
 #[cfg(test)]
 mod test {
     use super::AddressSet;
+    use crate::common::address::Short;
 
     #[test]
     fn add_test() {
         let a = AddressSet::new();
-        let mut b = a + 5;
-        assert_eq!(b, AddressSet::from_slice(&[5]));
-        b += 9;
-        assert_eq!(b, AddressSet::from_slice(&[9, 5]));
+        let mut b = a + Short::new(5);
+        assert_eq!(b, AddressSet::from_slice(&[Short::new(5)]));
+        b += Short::new(9);
+        assert_eq!(b, AddressSet::from_slice(&[Short::new(9), Short::new(5)]));
     }
 
     #[test]
     fn sub_test() {
-        let a = AddressSet::from_slice(&[4, 7, 6]);
-        let mut b = a - 7;
-        assert_eq!(b, AddressSet::from_slice(&[6, 4]));
-        b -= 6;
-        assert_eq!(b, AddressSet::from_slice(&[4]));
+        let a = AddressSet::from_slice(&[Short::new(4), Short::new(7), Short::new(6)]);
+        let mut b = a - Short::new(7);
+        assert_eq!(b, AddressSet::from_slice(&[Short::new(6), Short::new(4)]));
+        b -= Short::new(6);
+        assert_eq!(b, AddressSet::from_slice(&[Short::new(4)]));
     }
 
     #[test]
     fn range_test() {
-        let mut a = AddressSet::from_range(0u8..64u8);
-        assert_eq!(a, (0..64).fold(AddressSet::new(), |a, b| a + b));
-        a -= 9;
+        let mut a = AddressSet::from_range(Short::new(0)..=Short::new(63));
+        assert_eq!(a, (0..64).fold(AddressSet::new(), |a, b| a + Short::new(b)));
+        a -= Short::new(9);
         assert_eq!(
             a,
-            AddressSet::from_range(0u8..9) + AddressSet::from_range(10u8..64)
+            AddressSet::from_range(Short::new(0)..=Short::new(8)) + AddressSet::from_range(Short::new(10)..=Short::new(63))
         );
-        let a = AddressSet::from_range(7u8..63u8);
-        assert_eq!(a, (7..63).fold(AddressSet::new(), |a, b| a + b));
-        let a = AddressSet::from_range(0u8..0u8);
-        assert_eq!(a, AddressSet::new());
+        let a = AddressSet::from_range(Short::new(7)..=Short::new(62));
+        assert_eq!(a, (7..63).fold(AddressSet::new(), |a, b| a + Short::new(b)));
     }
 }

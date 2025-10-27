@@ -128,13 +128,13 @@ pub trait DaliDriver: Send {
     /// * `cmd` - Bytes of command
     /// * `flags` - Options for transaction
 
-    fn send_frame(&mut self, cmd: DaliFrame, flags: Flags) -> DynFuture<DaliSendResult>;
+    fn send_frame(&mut self, cmd: DaliFrame, flags: Flags) -> DynFuture<'_, DaliSendResult>;
 
-    fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult>;
+    fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult>;
 
     fn current_timestamp(&self) -> Instant;
 
-    fn wait_until(&self, end: Instant) -> DynFuture<()>;
+    fn wait_until(&self, end: Instant) -> DynFuture<'_, ()>;
 }
 
 pub const YES: DaliSendResult = DaliSendResult::Answer(0xff);
@@ -170,8 +170,7 @@ pub struct DriverInfo {
     pub open: fn(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, OpenError>,
 }
 
-pub static DRIVERS:Mutex<Vec<DriverInfo>> = Mutex::new(Vec::new());
-
+pub static DRIVERS: Mutex<Vec<DriverInfo>> = Mutex::new(Vec::new());
 
 /// Opens a driver instance with the given name and parameters
 ///

@@ -276,7 +276,7 @@ impl DaliDriver for DaliRpiDriver {
         }
     }
 
-    fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
+    fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult> {
         Box::pin(async {
             self.rx_monitor
                 .recv()
@@ -289,7 +289,7 @@ impl DaliDriver for DaliRpiDriver {
         Instant::now()
     }
 
-    fn wait_until(&self, end: std::time::Instant) -> DynFuture<()> {
+    fn wait_until(&self, end: std::time::Instant) -> DynFuture<'_, ()> {
         Box::pin(tokio::time::sleep_until(end.into()))
     }
 }

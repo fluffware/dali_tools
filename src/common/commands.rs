@@ -32,7 +32,7 @@ pub trait Commands {
     fn searchaddr_l(&mut self, l: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
     fn program_short_address(
         &mut self,
-        addr: Short,
+        addr: Option<Short>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
     fn verify_short_address(
         &mut self,

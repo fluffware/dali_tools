@@ -87,7 +87,7 @@ impl<'a> Commands for Commands103<'a> {
         self.cmd(SEARCHADDRL(l)).await
     }
 
-    async fn program_short_address(&mut self, addr: Short) -> Result<(), Self::Error> {
+    async fn program_short_address(&mut self, addr: Option<Short>) -> Result<(), Self::Error> {
         self.cmd(PROGRAM_SHORT_ADDRESS(addr)).await
     }
     async fn verify_short_address(&mut self, addr: Short) -> Result<YesNo, Self::Error> {

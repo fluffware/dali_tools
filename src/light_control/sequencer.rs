@@ -1,11 +1,23 @@
 use super::address_set::AddressSet;
-use super::colored_light::LightSequencePoint;
-use core::cmp::PartialOrd;
-use std::fmt::Debug;
+use super::colored_light::{LightSequencePoint, LightValue};
 use super::timestamp::Timestamp;
+use core::cmp::PartialOrd;
+use core::ops::Range;
+use std::fmt::Debug;
 
+pub enum FadeState {
+    Unknown,
+    Fixed(LightValue), // No fade
+    Fade(LightValue, LightValue), // Fading from first to second
+}
+
+pub struct FadeRange {
+    addresses: Range<u8>,
+    fade: FadeState,
+}
 pub struct Sequencer<T> {
-    current: Vec<(AddressSet, LightSequencePoint<T>)>, // Sorted by time stamp
+    /// Current operations
+    current: Vec<FadeRange>,                           // Sorted by address
     pending: Vec<(AddressSet, LightSequencePoint<T>)>, // Sorted by time stamp
 }
 
@@ -34,7 +46,6 @@ where
         if light.is_empty() {
             return;
         }
-
 
         // Find the first pending point after the start of the new sequence
         let pending = &mut self.pending;
@@ -88,7 +99,16 @@ where
         }
     }
 
-    fn update(&mut self, now: T) {}
+    /// Dispatch commands
+    fn update(&mut self, _now: T) {
+        for _seq in &self.pending {
+            /*
+            let mut i = 0;
+            if seq.1.when <= now {
+                i += 1;
+            }*/
+        }
+    }
 
     fn next_update(&self) -> Option<T> {
         None
@@ -101,7 +121,7 @@ mod test {
         address_set::AddressSet,
         colored_light::{ColoredLight, LightSequencePoint, LightValue},
     };
-    use super::{Timestamp as TimestampTrait, Sequencer};
+    use super::{Sequencer, Timestamp as TimestampTrait};
     type Timestamp = i32; // ms
     type Duration = i32; //ms
     const NEAR_LIMIT: i32 = 200;
@@ -169,17 +189,17 @@ mod test {
                 (300, 45.0, &[2, 3, 5]),
                 (310, 49.0, &[2, 3]),
                 (590, 89.0, &[2, 3]),
-                (600, 45.0, &[2,3, 6]),
+                (600, 45.0, &[2, 3, 6]),
             ],
         );
-	add_seq(&mut seq, &[3, 7], &[(590, 92.0)]);
-	check_seq(
+        add_seq(&mut seq, &[3, 7], &[(590, 92.0)]);
+        check_seq(
             &seq,
             &[
                 (300, 45.0, &[2, 3, 5]),
                 (310, 49.0, &[2, 3]),
                 (590, 89.0, &[2]),
-		(590, 92.0, &[3,7]),
+                (590, 92.0, &[3, 7]),
                 (600, 45.0, &[2, 6]),
             ],
         );

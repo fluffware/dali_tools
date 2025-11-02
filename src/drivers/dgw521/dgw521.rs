@@ -353,12 +353,10 @@ impl MonitorState {
 
                         let event_type = if info & 0x06 != 0 {
                             DaliBusEventType::FramingError
+                        } else if info & 0x08 != 0 {
+                            DaliBusEventType::Frame16(u16::to_be_bytes(regs[(i * 2) as usize]))
                         } else {
-                            if info & 0x08 != 0 {
-                                DaliBusEventType::Frame16(u16::to_be_bytes(regs[(i * 2) as usize]))
-                            } else {
-                                DaliBusEventType::Frame8((regs[(i * 2) as usize] & 0xff) as u8)
-                            }
+                            DaliBusEventType::Frame8((regs[(i * 2) as usize] & 0xff) as u8)
                         };
                         let _ = notify.try_send(DaliBusEvent {
                             timestamp: self.last_ts,
@@ -448,7 +446,7 @@ impl DaliDriver for Dgw521Driver {
         let req = DALIreq {
             cmd: DALIcmd {
                 data: cmd.clone(),
-                flags: flags,
+                flags,
             },
             reply: tx,
         };
@@ -487,10 +485,8 @@ impl DaliDriver for Dgw521Driver {
 
 impl Drop for Dgw521Driver {
     fn drop(&mut self) {
-        if self.send_cmd.take().is_some() {
-            if let Some(join) = self.join.take() {
-                let _ = block_on(join);
-            }
+        if self.send_cmd.take().is_some() && let Some(join) = self.join.take() {
+            let _ = block_on(join);
         }
     }
 }

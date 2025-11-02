@@ -24,7 +24,7 @@ impl fmt::Display for DaliSendResult {
             DaliSendResult::Answer(r) => write!(f, "Answer: 0x{:02x}", r),
             DaliSendResult::Timeout => write!(f, "Command timed out"),
             DaliSendResult::Framing => write!(f, "Invalid framing"),
-            DaliSendResult::DriverError(e) => write!(f, "Drive error: {}", e.to_string()),
+            DaliSendResult::DriverError(e) => write!(f, "Drive error: {}", e),
             DaliSendResult::Pending => write!(f, "Pending"),
         }
     }
@@ -127,13 +127,16 @@ pub trait DaliDriver: Send {
     /// # Arguments
     /// * `cmd` - Bytes of command
     /// * `flags` - Options for transaction
-
     fn send_frame(&mut self, cmd: DaliFrame, flags: Flags) -> DynFuture<'_, DaliSendResult>;
 
+    /// Wait for next_bus_event. If there already are unread events
+    /// queued, then return immeediately.
     fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult>;
 
+    /// Current time time of driver
     fn current_timestamp(&self) -> Instant;
 
+    /// Wait until the given time has passed, as given by current_timestamp()
     fn wait_until(&self, end: Instant) -> DynFuture<'_, ()>;
 }
 
@@ -159,7 +162,7 @@ impl fmt::Display for OpenError {
         }
     }
 }
-
+type OpenDriver = fn(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, OpenError>;
 #[derive(Debug)]
 pub struct DriverInfo {
     // Name of the driver
@@ -167,7 +170,7 @@ pub struct DriverInfo {
     // A text decribing the driver in some detail
     pub description: String,
     // Open a driver instance using the supplied parameters
-    pub open: fn(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, OpenError>,
+    pub open: OpenDriver,
 }
 
 pub static DRIVERS: Mutex<Vec<DriverInfo>> = Mutex::new(Vec::new());

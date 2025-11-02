@@ -75,7 +75,7 @@ async fn main() {
                 return;
             }
         },
-        None => addr.clone(),
+        None => addr,
     };
     if end_addr < addr {
         println!("End address must be greater or equal to start address");

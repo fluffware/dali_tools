@@ -13,12 +13,12 @@ where
     T: DaliDriver + ?Sized,
 {
     fn send_frame16(&mut self, cmd: &[u8; 2], flags: Flags) -> DynFuture<'_, DaliSendResult> {
-        let cmd = DaliFrame::Frame16(cmd.clone());
+        let cmd = DaliFrame::Frame16(*cmd);
         self.send_frame(cmd, flags)
     }
 
     fn send_frame24(&mut self, cmd: &[u8; 3], flags: Flags) -> DynFuture<'_, DaliSendResult> {
-        let cmd = DaliFrame::Frame24(cmd.clone());
+        let cmd = DaliFrame::Frame24(*cmd);
         self.send_frame(cmd, flags)
     }
 }

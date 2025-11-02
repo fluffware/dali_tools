@@ -16,7 +16,7 @@ pub mod types {
 
 impl DeviceType {
     pub fn new(dtype: u8) -> DeviceType {
-        DeviceType { 0: dtype }
+        DeviceType(dtype)
     }
 
     pub fn value(&self) -> u8 {
@@ -39,7 +39,7 @@ impl fmt::Display for DeviceType {
             types::UNIMPLEMENTED => "Not implemented",
             _ => "",
         };
-        if type_str == "" {
+        if type_str.is_empty() {
             write!(f, "Unknown type {}", self.0)
         } else {
             f.write_str(type_str)

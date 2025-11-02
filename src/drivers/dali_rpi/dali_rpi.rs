@@ -68,14 +68,10 @@ fn bytes_to_event(bytes: &[u8]) -> Option<DaliBusEvent> {
         8 => Some(DaliBusEventType::BusPowerOn),
         _ => None,
     };
-    if let Some(event_type) = event_type {
-        Some(DaliBusEvent {
-            timestamp: Instant::now(),
-            event_type,
-        })
-    } else {
-        None
-    }
+    event_type.map(|event_type| DaliBusEvent {
+        timestamp: Instant::now(),
+        event_type,
+    })
 }
 
 async fn driver_thread(
@@ -160,25 +156,21 @@ async fn driver_thread(
                         ser_rx_pos += n;
                         while ser_rx_pos >= 8 {
                             //println!("Reply: {:?}", &ser_rx_buf[0..8]);
-                            if let Some((seqno, _)) = &current_req {
-                                if *seqno == ser_rx_buf[0] {
-                                    let (_,req) = current_req.take().unwrap();
-                                    let result = match ser_rx_buf[1] {
-                                        2 => Some(DaliSendResult::Ok),
-                                        3 => Some(DaliSendResult::Answer(ser_rx_buf[4])),
-                                        10 => Some(DaliSendResult::Timeout),
-                                        _ => None,
-                                    };
-                                    if let Some(result) = result {
-                                        req.reply.send(result).unwrap();
-                                        req_timeout = None;
-                                    }
+                            if let Some((seqno, _)) = &current_req && *seqno == ser_rx_buf[0] {
+                                let (_,req) = current_req.take().unwrap();
+                                let result = match ser_rx_buf[1] {
+                                    2 => Some(DaliSendResult::Ok),
+                                    3 => Some(DaliSendResult::Answer(ser_rx_buf[4])),
+                                    10 => Some(DaliSendResult::Timeout),
+                                    _ => None,
+                                };
+                                if let Some(result) = result {
+                                    req.reply.send(result).unwrap();
+                                    req_timeout = None;
                                 }
                             }
-                            if ser_rx_buf[0] == 0 {
-                                if let Some(event) = bytes_to_event(&ser_rx_buf) {
-                                    let _ = monitor.try_send(event);
-                                }
+                            if ser_rx_buf[0] == 0 && let Some(event) = bytes_to_event(&ser_rx_buf) {
+                                let _ = monitor.try_send(event);
                             }
                             ser_rx_buf.copy_within(8.., 0);
                             ser_rx_pos -= 8;
@@ -258,7 +250,7 @@ impl DaliDriver for DaliRpiDriver {
         let req = DALIreq {
             cmd: DALIcmd {
                 data: cmd.clone(),
-                flags: flags,
+                flags,
             },
             reply: tx,
         };
@@ -296,10 +288,10 @@ impl DaliDriver for DaliRpiDriver {
 
 impl Drop for DaliRpiDriver {
     fn drop(&mut self) {
-        if self.send_cmd.take().is_some() {
-            if let Some(join) = self.join.take() {
-                let _ = block_on(join);
-            }
+        if self.send_cmd.take().is_some()
+            && let Some(join) = self.join.take()
+        {
+            let _ = block_on(join);
         }
     }
 }

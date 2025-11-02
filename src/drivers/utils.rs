@@ -27,7 +27,7 @@ pub fn send_frame(
     let req = DALIreq {
         cmd: DALIcmd {
             data: cmd.clone(),
-            flags: flags,
+            flags,
         },
         reply: tx,
     };

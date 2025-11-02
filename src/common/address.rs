@@ -91,7 +91,7 @@ impl std::cmp::Eq for Short {}
 
 impl std::cmp::PartialOrd for Short {
     fn partial_cmp(&self, other: &Short) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
     }
 }
 
@@ -101,23 +101,21 @@ impl std::cmp::Ord for Short {
     }
 }
 
-impl Into<AddressByte> for Short {
-    fn into(self) -> AddressByte {
-        AddressByte((self.0 << 1) | 1)
+impl From<Short> for AddressByte {
+    fn from(short: Short) -> Self {
+        AddressByte((short.0 << 1) | 1)
     }
 }
 
-impl Into<AddressByte> for Option<Short> {
-    fn into(self) -> AddressByte {
-	if let Some(addr) = self {
-            addr.into()
-	} else {
-	    AddressByte(0xff)
-	}
+impl From<Option<Short>> for AddressByte {
+    fn from(short_or_mask: Option<Short>) -> AddressByte {
+        if let Some(addr) = short_or_mask {
+            AddressByte::from(addr)
+        } else {
+            AddressByte(0xff)
+        }
     }
 }
-
-
 
 impl DisplayValue for Short {
     fn display_value(&self) -> u8 {
@@ -127,7 +125,7 @@ impl DisplayValue for Short {
     where
         A: TryInto<u8>,
     {
-        Self::convert_display_value(a).map(|a| Short(a))
+        Self::convert_display_value(a).map(Short)
     }
 }
 
@@ -211,11 +209,12 @@ impl<const MAX: u8> std::cmp::PartialEq<GroupImpl<MAX>> for GroupImpl<MAX> {
     }
 }
 
-impl<const MAX: u8> Into<AddressByte> for GroupImpl<MAX> {
-    fn into(self) -> AddressByte {
-        AddressByte((self.0 << 1) | 0x81)
+impl<const MAX: u8> From<GroupImpl<MAX>> for AddressByte {
+    fn from(group: GroupImpl<MAX>) -> AddressByte {
+        AddressByte((group.0 << 1) | 0x81)
     }
 }
+
 impl<const MAX: u8> DisplayValue for GroupImpl<MAX> {
     fn display_value(&self) -> u8 {
         self.0 + Self::DISPLAY_RANGE.start()
@@ -225,7 +224,7 @@ impl<const MAX: u8> DisplayValue for GroupImpl<MAX> {
     where
         A: TryInto<u8>,
     {
-        Self::convert_display_value(a).map(|a| GroupImpl(a))
+        Self::convert_display_value(a).map(GroupImpl)
     }
 }
 
@@ -291,10 +290,9 @@ impl<const MAX_GROUP: u8> std::cmp::PartialEq<GroupImpl<MAX_GROUP>> for AddressI
         }
     }
 }
-
-impl<const MAX_GROUP: u8> Into<AddressByte> for AddressImpl<MAX_GROUP> {
-    fn into(self) -> AddressByte {
-        match self {
+impl<const MAX_GROUP: u8> From<AddressImpl<MAX_GROUP>> for AddressByte {
+    fn from(addr: AddressImpl<MAX_GROUP>) -> AddressByte {
+        match addr {
             AddressImpl::Short(a) => a.into(),
             AddressImpl::Group(a) => a.into(),
             AddressImpl::Broadcast => AddressByte(0xff),

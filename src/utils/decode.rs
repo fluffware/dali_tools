@@ -1,4 +1,4 @@
-const CMD_DESCR_16: [&'static str; 256] = [
+const CMD_DESCR_16: [&str; 256] = [
     "Off",
     "Up",
     "Down",
@@ -340,20 +340,20 @@ fn instance_cmd_descr_24(cmd: u8) -> &'static str {
 fn decode_addr(addr: u8) -> String {
     if addr & 0xfe == 0xfe {
         // Broadcast
-        return "Broadcast".to_string();
+        "Broadcast".to_string()
     } else if addr & 0xfe == 0xfc {
         // Broadcast unaddressed
-        return "Unaddressed".to_string();
+        "Unaddressed".to_string()
     } else if addr & 0x80 != 0 {
         // Group
         if addr & 0x60 != 0 {
-            return "Illegal group address".to_string();
+            "Illegal group address".to_string()
         } else {
-            return format!("Group: {}", (addr >> 1) & 0x0f);
+            format!("Group: {}", (addr >> 1) & 0x0f)
         }
     } else {
         /* Address */
-        return format!("Addr: {}", (addr >> 1) & 0x3f);
+        format!("Addr: {}", (addr >> 1) & 0x3f)
     }
 }
 
@@ -399,24 +399,24 @@ fn decode_16bit(pkt: &[u8]) -> String {
     } else {
         str = decode_addr(pkt[0]) + ": " + &format!("Set power = {}", pkt[1]);
     }
-    return str;
+    str
 }
 
 fn decode_cmd_addr_24bit(addr: u8) -> Option<String> {
     if addr & 0xfe == 0xfe {
         // Broadcast
-        return Some("Broadcast".to_string());
+        Some("Broadcast".to_string())
     } else if addr & 0xfe == 0xfc {
         // Broadcast unaddressed
-        return Some("Unaddressed".to_string());
+	Some("Unaddressed".to_string())
     } else if addr & 0xc0 == 0x80 {
         // Group
-        return Some(format!("Group: {}", (addr >> 1) & 0x0f));
+        Some(format!("Group: {}", (addr >> 1) & 0x0f))
     } else if (addr & 0x80) == 0x00 {
         // Address
-        return Some(format!("Addr: {}", (addr >> 1) & 0x3f));
+        Some(format!("Addr: {}", (addr >> 1) & 0x3f))
     } else {
-        return None;
+        None
     }
 }
 
@@ -570,7 +570,7 @@ fn decode_24bit(pkt: &[u8]) -> String {
                 str = addr_str + ": " + &decode_instance_command(pkt[2]);
             }
         } else {
-            str = decode_special_command(&pkt);
+            str = decode_special_command(pkt);
         }
     } else {
         let value = ((u16::from(pkt[1]) & 0x03) << 8) | u16::from(pkt[2]);
@@ -579,14 +579,14 @@ fn decode_24bit(pkt: &[u8]) -> String {
             + "): "
             + &format!("{} (0x{:03x})", value, value);
     }
-    return str;
+    str
 }
 
 pub fn decode_packet(pkt: &[u8]) -> String {
     let len = pkt.len();
-    return match len {
+    match len {
         3 => decode_24bit(pkt),
         2 => decode_16bit(pkt),
         _ => "Invalid packet length".to_string(),
-    };
+    }
 }

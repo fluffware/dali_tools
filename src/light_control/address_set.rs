@@ -18,15 +18,7 @@ impl AddressSet {
     }
 
     pub fn to_vec(&self) -> Vec<u8> {
-        (0..64)
-            .filter_map(|b| {
-                if (self.0 & 1 << b) != 0 {
-                    Some(b)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        (0..64).filter(|b| (self.0 & 1 << b) != 0).collect()
     }
 
     pub fn from_range(addrs: Range<u8>) -> AddressSet {
@@ -34,7 +26,7 @@ impl AddressSet {
             return AddressSet(0);
         }
         let start_bit = 1u64 << addrs.start;
-        let end_bit = 1u64 << addrs.end - 1;
+        let end_bit = 1u64 << (addrs.end - 1);
         let s = !(start_bit - 1) & ((end_bit - 1) + end_bit);
         AddressSet(s)
     }

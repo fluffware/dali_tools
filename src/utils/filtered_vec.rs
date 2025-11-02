@@ -71,6 +71,11 @@ impl<T> FilteredVec<T> {
         let map = self.map.borrow();
         map.len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.build_all();
+        let map = self.map.borrow();
+        map.is_empty()
+    }
 
     pub fn iter<'a>(&'a self) -> Iter<'a, T> {
         Iter { vec: self, next: 0 }
@@ -103,7 +108,7 @@ impl<T> FilteredVec<T> {
         }
     }
 
-    pub fn get_mut<'a>(&'a mut self, index: usize) -> Option<&'a mut T> {
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         self.build_until(index);
         let map = self.map.borrow_mut();
         if index < map.len() {
@@ -136,12 +141,18 @@ impl<T> From<Vec<T>> for FilteredVec<T> {
     }
 }
 
+impl<T> From<FilteredVec<T>> for Vec<T> {
+    fn from(filtered: FilteredVec<T>) -> Vec<T> {
+	filtered.vec
+    }
+}
+/*
 impl<T> Into<Vec<T>> for FilteredVec<T> {
     fn into(self) -> Vec<T> {
         self.vec
     }
 }
-
+*/
 #[test]
 fn test_index() {
     let sv = FilteredVec::new(vec![1, 2, 3, 4, 5, 6, 7, 8], |x| x % 2 == 0);

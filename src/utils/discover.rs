@@ -16,15 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 async fn send_blocking<T>(tx: &mut Sender<T>, item: T) -> Result<(), SendError<T>> {
     let sent = item;
-    loop {
-        let res = tx.send(sent).await;
-        match res {
-            Ok(()) => break,
-            Err(r) => {
-                return Err(r);
-            }
-        }
-    }
+    tx.send(sent).await?;
     Ok(())
 }
 
@@ -63,7 +55,6 @@ const TOP_SEARCH_ADDR: u32 = 0x1000000;
 /// with multiple device with a random address below it.
 /// `high_single` and `low_multiple` are candidates
 /// for `low` and `high` respectively when searching for the next device
-
 async fn find_device<C>(
     commands: &mut C,
     mut low: u32,
@@ -109,10 +100,10 @@ where
             }
             Ok(YesNo::No) => {
                 //println!("Found none");
-                if let Some(lm) = *low_multiple {
-                    if pivot + 2 > lm {
-                        break SearchResult::Conflict(pivot + 1);
-                    }
+                if let Some(lm) = *low_multiple
+                    && pivot + 2 > lm
+                {
+                    break SearchResult::Conflict(pivot + 1);
                 }
                 if pivot == high - 1 {
                     break SearchResult::NoneFound;
@@ -172,9 +163,7 @@ where
             SearchResult::Found(addr) => {
                 let res =
                     long_address::set_search_addr_changed(commands, addr, &mut current_search_addr);
-                if let Err(e) = res.await {
-                    return Err(e);
-                };
+                res.await?;
 
                 let res = commands.query_short_address().await;
                 match res {
@@ -232,9 +221,7 @@ where
             SearchResult::Conflict(addr) => {
                 let res =
                     long_address::set_search_addr_changed(commands, addr, &mut current_search_addr);
-                if let Err(e) = res.await {
-                    return Err(e);
-                };
+                res.await?;
 
                 commands.withdraw().await?;
 
@@ -262,7 +249,7 @@ where
 }
 
 /// Addresses of devices discovered on the bus.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Discovered {
     /// Random address for device. None if there's conflicting short addresses or the device doesn't report a random address.
     pub long: Option<Long>,
@@ -274,31 +261,20 @@ pub struct Discovered {
     pub short_conflict: bool,
 }
 
-impl Default for Discovered {
-    fn default() -> Self {
-        Discovered {
-            long: None,
-            short: None,
-            long_conflict: false,
-            short_conflict: false,
-        }
-    }
-}
-
-async fn discover_async<'a, C, F>(commands: &mut C, found: &'a mut F) -> Result<(), C::Error>
+async fn discover_async<C, F>(commands: &mut C, found: &mut F) -> Result<(), C::Error>
 where
     C: Commands,
     F: AsyncFnMut(Discovered),
 {
     let mut found_short = [Option::<Long>::None; 64];
-    for index in 0..64usize {
+    for (index, short) in found_short.iter_mut().enumerate() {
         let a = Short::new(index as u8);
         //eprintln!("Addr: {}", a);
         let mut retry = 3u32;
         match loop {
             match commands.query_random_address(a).await {
                 Ok(l) => {
-                    found_short[index] = Some(l);
+                    *short = Some(l);
                     break Ok(l);
                 }
                 Err(e) => {
@@ -339,8 +315,8 @@ where
     let mut current_search_addr = 0xffffffff;
 
     // WITHDRAW all devices with a short address
-    for index in 0..64usize {
-        if let Some(l) = found_short[index] {
+    for short in found_short.iter() {
+        if let Some(l) = *short {
             long_address::set_search_addr_changed(commands, l, &mut current_search_addr).await?;
             commands.withdraw().await?;
         }
@@ -373,27 +349,22 @@ async fn discover_thread<DC>(
     let _ = commands.terminate().await;
 }
 
+type CommandsDiscoverItem<DC> =
+    DiscoverItem<<<DC as DriverCommands>::Output<'static> as Commands>::Error>;
 /// Find all devices on the bus.
 ///
 /// Returns a stream of all devices found.
 /// Devices are found by first testing all 64 short addresses and then,
 /// after WITHDRAWing the addresses found,
 /// search for unaddressed devices using COMPARE.
-
 pub fn find_quick<DC>(
     driver: Arc<Mutex<Box<dyn DaliDriver>>>,
-) -> Pin<
-    Box<
-        dyn Stream<
-            Item = DiscoverItem<<<DC as DriverCommands>::Output<'static> as Commands>::Error>,
-        >,
-    >,
->
+) -> Pin<Box<dyn Stream<Item = CommandsDiscoverItem<DC>>>>
 where
     DC: DriverCommands + Send + 'static,
     DC::Error: Error + Send + Sync + 'static,
 {
     let (tx, rx) = tokio::sync::mpsc::channel(64);
     tokio::spawn(discover_thread::<DC>(tx, driver));
-    return Box::pin(ReceiverStream::new(rx));
+    Box::pin(ReceiverStream::new(rx))
 }

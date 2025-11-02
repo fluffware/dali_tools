@@ -46,5 +46,5 @@ pub fn start(
 
     let (server, bound_ip, bound_port) = web_server::setup_server(conf);
 
-    return Ok((server, bound_ip, bound_port));
+    Ok((server, bound_ip, bound_port))
 }

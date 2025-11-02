@@ -24,7 +24,7 @@ pub struct LightSequencePoint<Instant = std::time::Instant> {
 // Bongsoon Kang; Ohak Moon; Changhee Hong; Honam Lee; Bonghwan Cho; Youngsun Kim (December 2002).
 // "Design of Advanced Color Temperature Control System for HDTV Applications"
 // Equations 8 and 9
-
+#[allow(clippy::excessive_precision)]
 pub fn cct_to_xy(kelvin: u32) -> (f32, f32) {
     let mired = 1.0e6 / (kelvin as f32);
     let mired2 = mired * mired;

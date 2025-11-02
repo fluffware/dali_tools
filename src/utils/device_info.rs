@@ -86,9 +86,9 @@ pub fn fmt_groups(f: &mut fmt::Formatter<'_>, groups: u16) -> fmt::Result {
 
 pub fn fmt_scenes(f: &mut fmt::Formatter<'_>, scenes: &[u8; 16]) -> fmt::Result {
     let mut str = Vec::new();
-    for i in 0..16 {
-        if scenes[i] != MASK {
-            str.push(format!("{}: {}", i, scenes[i]));
+    for (i, &scene) in scenes.iter().enumerate() {
+        if scene != MASK {
+            str.push(format!("{}: {}", i, scene));
         }
     }
     f.write_str(&str.join(", "))
@@ -102,7 +102,7 @@ impl fmt::Display for GearInfo {
         if let Some(short) = self.short_addr {
             writeln!(f, "Short address: {} (0x{:02x})", short, short.value())?
         }
-        if self.device_types.len() > 0 {
+        if !self.device_types.is_empty() {
             f.write_str("Device type:")?;
             for t in &self.device_types {
                 write!(f, " {} (0x{})", t, t.value())?;
@@ -220,7 +220,7 @@ async fn send_query(
     match send16::query(d, cmd, NO_FLAG).await {
         DaliSendResult::Answer(s) => Ok(Some(s)),
         DaliSendResult::Timeout => Ok(None),
-        e => return Err(e),
+        e => Err(e),
     }
 }
 
@@ -264,8 +264,8 @@ pub async fn read_gear_info(
 
     let mut scenes = [MASK; 16];
     let mut scene_count = 0;
-    for i in 0..16 {
-        scenes[i] = match send16::query(d, cmd::QUERY_SCENE_LEVEL(addr, i as u8), NO_FLAG).await {
+    for (i, scene) in scenes.iter_mut().enumerate() {
+        *scene = match send16::query(d, cmd::QUERY_SCENE_LEVEL(addr, i as u8), NO_FLAG).await {
             DaliSendResult::Answer(s) => {
                 scene_count += 1;
                 s
@@ -362,7 +362,7 @@ async fn send_query24(
     match d.send_frame24(&cmd.0, EXPECT_ANSWER).await {
         DaliSendResult::Answer(s) => Ok(Some(s)),
         DaliSendResult::Timeout => Ok(None),
-        e => return Err(e),
+        e => Err(e),
     }
 }
 pub async fn read_control_info(

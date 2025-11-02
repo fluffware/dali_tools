@@ -67,7 +67,7 @@ where
     set_search_addr(commands, long).await?;
     commands.program_short_address(None).await?;
     let a = commands.query_short_address().await?;
-    if !a.is_none() {
+    if a.is_some() {
         return Err(Error::AddressValidation);
     }
     Ok(())

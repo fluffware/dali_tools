@@ -42,7 +42,6 @@ pub mod send16 {
     /// * `addr` - Address of device(s)
     /// * `level` - Intensity level
     /// * `flags` - Options for transaction
-
     pub fn device_level<'driver>(
         driver: &'driver mut dyn DaliDriver,
         addr: Address,
@@ -56,7 +55,6 @@ pub mod send16 {
     ///
     /// # Arguments
     /// * `dtr` - Value to store in DTR0
-
     pub fn set_dtr0<'driver>(
         driver: &'driver mut dyn DaliDriver,
         dtr: u8,
@@ -69,7 +67,6 @@ pub mod send16 {
     ///
     /// # Arguments
     /// * `dtr` - Value to store in DTR1
-
     pub fn set_dtr1<'driver>(
         driver: &'driver mut dyn DaliDriver,
         dtr: u8,
@@ -82,7 +79,6 @@ pub mod send16 {
     ///
     /// # Arguments
     /// * `dtr` - Value to store in DTR2
-
     pub fn set_dtr2<'driver>(
         driver: &'driver mut dyn DaliDriver,
         dtr: u8,
@@ -127,7 +123,6 @@ pub mod send24 {
     ///
     /// # Arguments
     /// * `dtr` - Value to store in DTR0
-
     pub fn set_dtr0<'driver>(
         driver: &'driver mut dyn DaliDriver,
         dtr: u8,
@@ -140,7 +135,6 @@ pub mod send24 {
     ///
     /// # Arguments
     /// * `dtr` - Value to store in DTR1
-
     pub fn set_dtr1<'driver>(
         driver: &'driver mut dyn DaliDriver,
         dtr: u8,
@@ -153,7 +147,6 @@ pub mod send24 {
     ///
     /// # Arguments
     /// * `dtr` - Value to store in DTR2
-
     pub fn set_dtr2<'driver>(
         driver: &'driver mut dyn DaliDriver,
         dtr: u8,

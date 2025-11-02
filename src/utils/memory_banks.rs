@@ -47,6 +47,12 @@ pub struct MemoryBank0Info {
 
 impl MemoryBank0Info {
     pub fn new() -> MemoryBank0Info {
+        MemoryBank0Info::default()
+    }
+}
+
+impl Default for MemoryBank0Info {
+    fn default() -> Self {
         MemoryBank0Info {
             gtin: 0,
             firmware_version: 0,
@@ -64,9 +70,9 @@ impl MemoryBank0Info {
 
 fn version_str(ver: u8) -> String {
     if ver == 0xff {
-        return String::from("-");
+        String::from("-")
     } else {
-        return u8::to_string(&(ver >> 2)) + "." + &u8::to_string(&(ver & 3));
+        u8::to_string(&(ver >> 2)) + "." + &u8::to_string(&(ver & 3))
     }
 }
 
@@ -138,10 +144,8 @@ pub async fn read_range(
         if dtr != length + start {
             return Err(Box::new(MemoryError::LengthMismatch));
         }
-    } else {
-        if dtr != data.len() as u8 + 1 + start {
-            return Err(Box::new(MemoryError::LengthMismatch));
-        }
+    } else if dtr != data.len() as u8 + 1 + start {
+        return Err(Box::new(MemoryError::LengthMismatch));
     }
     Ok(data)
 }

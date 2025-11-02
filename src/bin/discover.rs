@@ -97,7 +97,7 @@ async fn main() {
                     short_conflicts.push(device.clone());
                 }
                 if let Some(addr) = device.short {
-                    allocated_addrs += addr;
+                    allocated_addrs.insert(addr);
                 } else {
                     unallocated.push(device);
                 }
@@ -110,19 +110,19 @@ async fn main() {
     if clear_conflicts && !short_conflicts.is_empty() {
         let _ = commands.initialise_all().await;
         for d in short_conflicts {
-            if let Some(long) = d.long {
-                if let Err(e) = clear_short_address(&mut commands, long).await {
-                    eprintln!(
-                        "Failed to clear short address for long address {}: {}",
-                        long, e,
-                    );
-                }
+            if let Some(long) = d.long
+                && let Err(e) = clear_short_address(&mut commands, long).await
+            {
+                eprintln!(
+                    "Failed to clear short address for long address {}: {}",
+                    long, e,
+                );
             }
         }
         let _ = commands.terminate().await;
     }
-    if allocate && !unallocated.is_empty(){
-        let _=commands.initialise_no_addr().await;
+    if allocate && !unallocated.is_empty() {
+        let _ = commands.initialise_no_addr().await;
         let mut next = 0;
         for device in unallocated {
             while next < 64 && allocated_addrs.contains(Short::new(next)) {
@@ -132,16 +132,16 @@ async fn main() {
                 eprintln!("No free addresses");
                 return;
             }
-	    if let Some(long) = device.long {
-		if let Err(e) = program_short_address(&mut commands, long, Short::new(next)).await {
-		    eprintln!(
+            if let Some(long) = device.long {
+                if let Err(e) = program_short_address(&mut commands, long, Short::new(next)).await {
+                    eprintln!(
                         "Failed to program short address for long address {}: {}",
                         long, e,
                     );
-		} else {
-		    next += 1;
-		}
-	    }
+                } else {
+                    next += 1;
+                }
+            }
         }
         let _ = commands.terminate().await;
     }

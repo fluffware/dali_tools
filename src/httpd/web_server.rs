@@ -29,12 +29,7 @@ fn no_resource(_path: &str) -> DynResult<(&str, Bytes)> {
 }
 impl ServerConfig {
     pub fn new() -> Self {
-        Self {
-            bind_addr: None,
-            port: None,
-            build_page: None,
-            web_resource: Box::new(no_resource),
-        }
+	Self::default()
     }
 
     pub fn port(mut self, p: u16) -> Self {
@@ -57,6 +52,17 @@ impl ServerConfig {
     }
 }
 
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: None,
+            port: None,
+            build_page: None,
+            web_resource: Box::new(no_resource),
+        }
+    }
+}
+
 async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult<Response<Body>> {
     let path = req.uri().path();
     match req.method() {
@@ -66,11 +72,11 @@ async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult
                 if let Some(build_page) = &mut conf.build_page {
                     build_page(req)
                 } else {
-                    return Response::builder()
+                    Response::builder()
                         .status(StatusCode::NOT_FOUND)
                         .header(header::CONTENT_TYPE, "text/plain")
-                        .body(Body::from(format!("No dynamic content")))
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+                        .body(Body::from("No dynamic content".to_string()))
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                 }
             } else {
                 let (mime_type, data) = {

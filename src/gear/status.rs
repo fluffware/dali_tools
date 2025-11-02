@@ -15,7 +15,7 @@ pub mod flag {
 
 impl GearStatus {
     pub fn new(status: u8) -> GearStatus {
-        GearStatus { 0: status }
+        GearStatus(status)
     }
 
     pub fn value(&self) -> u8 {

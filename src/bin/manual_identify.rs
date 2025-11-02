@@ -65,16 +65,7 @@ pub struct IdentificationCtxt {
 
 impl IdentificationCtxt {
     pub fn new() -> IdentificationCtxt {
-        let state = GearState {
-            current_gear: 0,
-            target_gear: 0,
-            gears: Vec::new(),
-        };
-        IdentificationCtxt {
-            state: RwLock::new(state),
-            low_level: AtomicU8::new(MASK),
-            high_level: AtomicU8::new(MASK),
-        }
+        Self::default()
     }
 
     fn get_state<R, F>(&self, f: F) -> R
@@ -82,7 +73,7 @@ impl IdentificationCtxt {
         F: FnOnce(&GearState) -> R,
     {
         let state = self.state.read().unwrap();
-        f(&*state)
+        f(&state)
     }
 
     fn modify_state<R, F>(&self, f: F) -> R
@@ -90,7 +81,7 @@ impl IdentificationCtxt {
         F: FnOnce(&mut GearState) -> R,
     {
         let mut state = self.state.write().unwrap();
-        f(&mut *state)
+        f(&mut state)
     }
 
     fn get_current_gear<R, F>(&self, f: F) -> R
@@ -101,6 +92,21 @@ impl IdentificationCtxt {
             let gear = state.gears.get(state.current_gear);
             f(gear)
         })
+    }
+}
+
+impl Default for IdentificationCtxt {
+    fn default() -> Self {
+        let state = GearState {
+            current_gear: 0,
+            target_gear: 0,
+            gears: Vec::new(),
+        };
+        IdentificationCtxt {
+            state: RwLock::new(state),
+            low_level: AtomicU8::new(MASK),
+            high_level: AtomicU8::new(MASK),
+        }
     }
 }
 
@@ -121,16 +127,13 @@ where
         };
         if let Some(status) = status {
             info!("{}: Status: {}\r\n", addr, status);
-            match cmd.query_random_address(Short::new(addr)).await {
-                Ok(l) => {
-                    info!("{}: Long: {:06x}\r\n", addr, l);
-                    found(GearData {
-                        long: l,
-                        old_addr: Some(addr),
-                        new_addr: None,
-                    });
-                }
-                Err(_) => {}
+            if let Ok(l) = cmd.query_random_address(Short::new(addr)).await {
+                info!("{}: Long: {:06x}\r\n", addr, l);
+                found(GearData {
+                    long: l,
+                    old_addr: Some(addr),
+                    new_addr: None,
+                });
             }
         }
     }
@@ -170,15 +173,15 @@ fn reply_scan_update(ctxt: &IdentificationCtxt) -> String {
         let length = gears.len() as u8;
         let mut current_address = MASK;
         let mut new_address = MASK;
-        if index < length {
-            if let Some(&GearData {
+        if index < length
+            && let Some(&GearData {
                 old_addr, new_addr, ..
             }) = gears.get(usize::from(index))
-            {
-                current_address = old_addr.unwrap_or(MASK);
-                new_address = new_addr.unwrap_or(MASK);
-            }
+        {
+            current_address = old_addr.unwrap_or(MASK);
+            new_address = new_addr.unwrap_or(MASK);
         }
+
         serde_json::to_string(&ScanUpdate {
             current_address,
             new_address,
@@ -243,11 +246,11 @@ async fn handle_commands(
         DaliCommands::NewAddress { address, index } => {
             ctxt.modify_state(|state| {
                 let gears = &mut state.gears;
-                if let Some(gear) = gears.get_mut(usize::from(index)).as_mut() {
-                    if (0..64).contains(&address) {
-                        debug!("new_addr = {}", address);
-                        gear.new_addr = Some(address);
-                    }
+                if let Some(gear) = gears.get_mut(usize::from(index)).as_mut()
+                    && (0..64).contains(&address)
+                {
+                    debug!("new_addr = {}", address);
+                    gear.new_addr = Some(address);
                 }
             });
         }
@@ -360,7 +363,7 @@ impl CmdLog {
     where
         F: FnOnce(&mut Vec<CmdLogEntry>) -> T,
     {
-        f(&mut *self.0.lock().unwrap())
+        f(&mut self.0.lock().unwrap())
     }
 }
 
@@ -383,11 +386,7 @@ fn bad_request(msg: &str) -> DynResult<Response<Body>> {
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
 }
 
-fn get_int_arg<'a, B>(
-    args: &BTreeMap<&str, &str>,
-    name: &str,
-    bounds: B,
-) -> Result<i32, ResponseError>
+fn get_int_arg<B>(args: &BTreeMap<&str, &str>, name: &str, bounds: B) -> Result<i32, ResponseError>
 where
     B: RangeBounds<i32>,
 {
@@ -424,7 +423,7 @@ fn decode_get_request(
                     return bad_request("Missing '='");
                 };
                 args.insert(k, v);
-                while let Some(kv) = query_parts.next() {
+                for kv in query_parts {
                     let Some((k, v)) = kv.split_once('=') else {
                         return bad_request("Missing '='");
                     };
@@ -469,7 +468,7 @@ fn decode_get_request(
         let id = NEXT_LOG_ID.fetch_add(1, atomic::Ordering::Relaxed);
         let log_item = CmdLogEntry {
             id: u32::from(id),
-            cmd: cmd,
+            cmd,
             status: DaliCommandStatus::Executing,
             notify: Some(rx),
         };
@@ -487,18 +486,16 @@ fn decode_get_request(
                 .position(|entry| entry.status != DaliCommandStatus::Executing)
             {
                 serde_json::to_string(&log.remove(index)).unwrap()
+            } else if !log.is_empty() {
+                serde_json::to_string(&log[0]).unwrap()
             } else {
-                if log.len() > 0 {
-                    serde_json::to_string(&log[0]).unwrap()
-                } else {
-                    serde_json::to_string(&CmdLogEntry {
-                        id: 0,
-                        cmd: DaliCommands::NoCommand,
-                        status: DaliCommandStatus::Done,
-                        notify: None,
-                    })
-                    .unwrap()
-                }
+                serde_json::to_string(&CmdLogEntry {
+                    id: 0,
+                    cmd: DaliCommands::NoCommand,
+                    status: DaliCommandStatus::Done,
+                    notify: None,
+                })
+                .unwrap()
             }
         });
         Response::builder()
@@ -516,7 +513,7 @@ fn decode_get_request(
         Response::builder()
             .status(http::StatusCode::NOT_FOUND)
             .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from(format!("No such command")))
+            .body(Body::from("No such command".to_string()))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
@@ -560,8 +557,8 @@ impl serde::Serialize for DaliCommands {
             ScanAddress { .. } => Self::SCAN_ADDRESS,
             FindAll => Self::FIND_ALL,
             NewAddress { .. } => Self::NEW_ADDRESS,
-            ChangeAddresses { .. } => Self::CHANGE_ADDRESSES,
-            Sort { .. } => Self::SORT,
+            ChangeAddresses => Self::CHANGE_ADDRESSES,
+            Sort => Self::SORT,
         })
     }
 }
@@ -645,22 +642,20 @@ async fn cmd_thread(
                 tick_blink.set(tokio::time::sleep(Duration::from_millis(300)).fuse());
 
                 let addr: Option<u8> = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr));
-                if let Some(addr) = addr  {
-                    if let Err(e) = {
-                        if current_high {
-                            current_high = false;
+                if let Some(addr) = addr  && let Err(e) = {
+                    if current_high {
+                        current_high = false;
                             set_low_level(&driver,
                                           ctxt.low_level.load(Ordering::Relaxed),
                                           &Address::Short(Short::new(addr))).await
-                        } else {
+                    } else {
                             current_high = true;
-                            set_high_level(&driver,
-                                           ctxt.high_level.load(Ordering::Relaxed),
-                                           &Address::Short(Short::new(addr))).await
+                        set_high_level(&driver,
+                                       ctxt.high_level.load(Ordering::Relaxed),
+                                       &Address::Short(Short::new(addr))).await
                         }
-                    } {
-                        error!("Failed to blink: {}",e);
-                    }
+                } {
+                    error!("Failed to blink: {}",e);
                 }
             }
             _ = future::ready(()), if step_gear => {
@@ -668,17 +663,17 @@ async fn cmd_thread(
                 start_blink.set(Fuse::terminated());
                 tick_blink.set(Fuse::terminated());
 
-                if current_high {
-            if let Some(addr) = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr)) {
-                if let Err(e) =
-                    set_high_level(&driver,
-                                   ctxt.high_level.load(Ordering::Relaxed),
-                                   &Address::Short(Short::new(addr))).await {
-                        error!("Failed to set high level: {}",e);
-                    }
-        current_high = true;
-            }
+                if current_high
+            && let Some(addr) = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr)) {
+            if let Err(e) =
+                set_high_level(&driver,
+                       ctxt.high_level.load(Ordering::Relaxed),
+                       &Address::Short(Short::new(addr))).await {
+                error!("Failed to set high level: {}",e);
                 }
+            current_high = true;
+            }
+
                 let (step_up,addr)  = ctxt.modify_state(|state| {
                     if state.current_gear < state.target_gear {
                         state.current_gear += 1;
@@ -696,13 +691,11 @@ async fn cmd_thread(
                                 error!("Failed to set high level: {}",e);
                             }
             current_high = true;
-                    } else {
-                        if let Err(e) =
-                            set_low_level(&driver,
-                                          ctxt.low_level.load(Ordering::Relaxed), &Address::Short(Short::new(addr))).await {
-                                error!("Failed to set high level: {}",e);
-                            }
-                    }
+                    } else if let Err(e) =
+                        set_low_level(&driver,
+                                      ctxt.low_level.load(Ordering::Relaxed), &Address::Short(Short::new(addr))).await {
+                            error!("Failed to set high level: {}",e);
+                        }
                 }
                 step_gear = ctxt.get_state(|s| s.current_gear != s.target_gear);
 
@@ -740,15 +733,6 @@ async fn main() -> ExitCode {
         error!("Failed to initialize DALI drivers: {}", e);
     }
     let args = CmdArgs::parse();
-
-    if args.low > MASK {
-        error!("Low level out of range");
-        return ExitCode::FAILURE;
-    }
-    if args.high > MASK {
-        error!("High level out of range");
-        return ExitCode::FAILURE;
-    }
 
     debug!("Low: {} High: {}", args.low, args.high);
     let id_ctxt = IdentificationCtxt::new();

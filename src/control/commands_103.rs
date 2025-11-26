@@ -1,4 +1,5 @@
 use crate::common::commands::{Commands, YesNo};
+use crate::common::driver_commands::DriverCommands;
 use crate::control::address::{Address, Short};
 use crate::control::cmd_defs::*;
 use crate::drivers::command_utils::send24;
@@ -43,6 +44,13 @@ impl<'a> Commands103<'a> {
             DaliSendResult::Framing => Ok(YesNo::Multiple),
             e => Err(e),
         }
+    }
+}
+
+impl DriverCommands for Commands103<'_> {
+    type Output<'a> = Commands103<'a>;
+    fn from_driver<'a>(driver: &'a mut dyn DaliDriver, flags: Flags) -> Self::Output<'a> {
+        Commands103 { driver, flags }
     }
 }
 

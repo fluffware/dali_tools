@@ -29,7 +29,7 @@ fn no_resource(_path: &str) -> DynResult<(&str, Bytes)> {
 }
 impl ServerConfig {
     pub fn new() -> Self {
-	Self::default()
+        Self::default()
     }
 
     pub fn port(mut self, p: u16) -> Self {

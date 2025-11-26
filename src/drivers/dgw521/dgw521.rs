@@ -19,6 +19,7 @@ use log::{debug, warn};
 use std::ops::{AddAssign, Sub};
 use std::str::FromStr;
 use std::time::Duration;
+use std::time::Instant as StdInstant;
 use tokio::sync::mpsc::{self, error::TryRecvError};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -28,7 +29,6 @@ use tokio_modbus::client::{Context, rtu};
 use tokio_modbus::prelude::*;
 use tokio_modbus::slave::Slave;
 use tokio_serial::{Parity, SerialStream};
-use std::time::Instant as StdInstant;
 
 #[allow(dead_code)]
 mod mb {
@@ -376,7 +376,6 @@ impl MonitorState {
             };
 
             self.last_index = self.last_index.wrapping_add(read_len);
-
         }
     }
 }
@@ -485,7 +484,9 @@ impl DaliDriver for Dgw521Driver {
 
 impl Drop for Dgw521Driver {
     fn drop(&mut self) {
-        if self.send_cmd.take().is_some() && let Some(join) = self.join.take() {
+        if self.send_cmd.take().is_some()
+            && let Some(join) = self.join.take()
+        {
             let _ = block_on(join);
         }
     }

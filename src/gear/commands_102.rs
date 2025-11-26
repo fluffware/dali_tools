@@ -109,7 +109,7 @@ impl<'a> Commands for Commands102<'a> {
         Ok(if raw == 0xff {
             None
         } else {
-            Some(Short::new(raw>>1))
+            Some(Short::new(raw >> 1))
         })
     }
     async fn dtr0(&mut self, data: u8) -> Result<(), Self::Error> {

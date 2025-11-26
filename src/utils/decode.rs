@@ -408,7 +408,7 @@ fn decode_cmd_addr_24bit(addr: u8) -> Option<String> {
         Some("Broadcast".to_string())
     } else if addr & 0xfe == 0xfc {
         // Broadcast unaddressed
-	Some("Unaddressed".to_string())
+        Some("Unaddressed".to_string())
     } else if addr & 0xc0 == 0x80 {
         // Group
         Some(format!("Group: {}", (addr >> 1) & 0x0f))

@@ -1,24 +1,9 @@
 use crate::common::address::Long;
 use crate::common::address::Short;
 use crate::common::commands::{Commands, ErrorInfo, YesNo};
-use crate::common::driver_commands::DriverCommands;
-use crate::drivers::driver::{DaliDriver, DaliSendResult};
-use crate::drivers::send_flags::PRIORITY_1;
+use crate::drivers::driver::DaliSendResult;
 use crate::utils::long_address;
 use log::debug;
-use std::error::Error;
-use std::pin::Pin;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::sync::mpsc::{Sender, error::SendError};
-use tokio_stream::Stream;
-use tokio_stream::wrappers::ReceiverStream;
-
-async fn send_blocking<T>(tx: &mut Sender<T>, item: T) -> Result<(), SendError<T>> {
-    let sent = item;
-    tx.send(sent).await?;
-    Ok(())
-}
 
 // Clear all bits except for the highest one
 fn high_bit(mut bits: u32) -> u32 {
@@ -327,44 +312,18 @@ where
 
 pub type DiscoverItem<E> = Result<Discovered, E>;
 
-async fn discover_thread<DC>(
-    mut tx: tokio::sync::mpsc::Sender<DiscoverItem<DaliSendResult>>,
-    driver: Arc<Mutex<Box<dyn DaliDriver>>>,
-) where
-    DC: DriverCommands + Send,
-{
-    let mut d = driver.lock().await;
-    let d_ref = d.as_mut();
-    let mut commands = DC::from_driver(d_ref, PRIORITY_1);
-    let cb_tx = tx.clone();
-    let mut send_cb = async move |item| {
-        cb_tx.send(Ok(item)).await.unwrap();
-    };
-    match discover_async(&mut commands, &mut send_cb).await {
-        Ok(()) => {}
-        Err(e) => {
-            send_blocking(&mut tx, Err(e)).await.unwrap();
-        }
-    };
-    let _ = commands.terminate().await;
-}
-
-type CommandsDiscoverItem<DC> =
-    DiscoverItem<<<DC as DriverCommands>::Output<'static> as Commands>::Error>;
 /// Find all devices on the bus.
 ///
-/// Returns a stream of all devices found.
+/// Calls a closure for every device foud
 /// Devices are found by first testing all 64 short addresses and then,
 /// after WITHDRAWing the addresses found,
 /// search for unaddressed devices using COMPARE.
-pub fn find_quick<DC>(
-    driver: Arc<Mutex<Box<dyn DaliDriver>>>,
-) -> Pin<Box<dyn Stream<Item = CommandsDiscoverItem<DC>>>>
+pub async fn find_quick<C, F>(commands: &mut C, found: &mut F) -> Result<(), <C as Commands>::Error>
 where
-    DC: DriverCommands + Send + 'static,
-    DC::Error: Error + Send + Sync + 'static,
+    C: Commands<Error = DaliSendResult>,
+    F: AsyncFnMut(Discovered),
 {
-    let (tx, rx) = tokio::sync::mpsc::channel(64);
-    tokio::spawn(discover_thread::<DC>(tx, driver));
-    Box::pin(ReceiverStream::new(rx))
+    let res = discover_async(&mut *commands, found).await;
+    let _ = commands.terminate().await;
+    res
 }

@@ -1,4 +1,4 @@
-use crate::common::address::{Long, Short};
+use crate::common::address::Short;
 use crate::common::defs::MASK;
 use crate::control::cmd_defs::Command as Command24;
 use crate::control::cmd_defs::{self as ccmd};
@@ -13,8 +13,7 @@ use crate::gear::status::GearStatus;
 use std::fmt;
 
 pub struct GearInfo {
-    random_addr: Option<Long>,
-    short_addr: Option<Short>,
+    short_addr: Short,
     version: Option<u8>,
     device_types: Vec<DeviceType>,
     light_source_types: Vec<u8>,
@@ -36,8 +35,7 @@ pub struct GearInfo {
 impl GearInfo {
     fn new() -> GearInfo {
         GearInfo {
-            random_addr: None,
-            short_addr: None,
+            short_addr: Short::new(0),
             version: None,
             device_types: Vec::new(),
             light_source_types: Vec::new(),
@@ -96,12 +94,12 @@ pub fn fmt_scenes(f: &mut fmt::Formatter<'_>, scenes: &[u8; 16]) -> fmt::Result 
 
 impl fmt::Display for GearInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(long) = self.random_addr {
-            writeln!(f, "Random address: {} (0x{:06x})", long, long)?
-        }
-        if let Some(short) = self.short_addr {
-            writeln!(f, "Short address: {} (0x{:02x})", short, short.value())?
-        }
+        writeln!(
+            f,
+            "Short address: {} (0x{:02x})",
+            self.short_addr,
+            self.short_addr.value()
+        )?;
         if !self.device_types.is_empty() {
             f.write_str("Device type:")?;
             for t in &self.device_types {
@@ -229,7 +227,7 @@ pub async fn read_gear_info(
     addr: Short,
 ) -> Result<GearInfo, DaliSendResult> {
     let mut info: GearInfo = GearInfo::new();
-    info.short_addr = Some(addr);
+    info.short_addr = addr;
     info.status = match send16::query(d, cmd::QUERY_STATUS(addr), NO_FLAG).await {
         DaliSendResult::Answer(s) => Some(GearStatus::new(s)),
         DaliSendResult::Timeout => None,
@@ -297,51 +295,127 @@ pub async fn read_gear_info(
     Ok(info)
 }
 pub struct Instance {
-    pub instance_type: u8,
-    pub resolution: u8,
-    pub error: u8,
-    pub status: u8,
-    pub event_priority: u8,
-    pub instance_groups: [u8; 3], // Primary, 1, 2
-    pub event_scheme: u8,
-    pub input_value: u32,
+    pub instance_type: Option<u8>,
+    pub features_types: Vec<u8>,
+    pub resolution: Option<u8>,
+    pub error: Option<u8>,
+    pub status: Option<u8>,
+    pub event_priority: Option<u8>,
+    pub instance_groups: Option<[u8; 3]>, // Primary, 1, 2
+    pub event_scheme: Option<u8>,
+    pub input_value: Option<u32>,
     pub feature_types: Vec<u8>,
-    pub event_filter: u32,
+    pub event_filter: Option<u32>,
 }
+
 pub struct ControlInfo {
-    pub random_addr: Long,
     pub short_addr: Short,
-    pub version: u8,
-    pub device_status: u8,
-    pub controller_error: u8,
-    pub device_error: u8,
-    pub operation_mode: u8,
-    pub manufacturer_specific_mode: u8,
-    pub device_groups: u32,
-    pub device_capabilities: u32,
+    pub version: Option<u8>,
+    pub device_status: Option<u8>,
+    pub controller_error: Option<u8>,
+    pub device_error: Option<u8>,
+    pub operating_mode: Option<u8>,
+    pub device_groups: Option<u32>,
+    pub device_capabilities: Option<u8>,
     pub instances: Vec<Instance>,
 }
 
 impl ControlInfo {
     fn new() -> ControlInfo {
         ControlInfo {
-            random_addr: 0,
             short_addr: Short::new(1),
-            version: 0,
-            device_status: 0,
-            controller_error: 0,
-            device_error: 0,
-            operation_mode: 0,
-            manufacturer_specific_mode: 0,
-            device_groups: 0,
-            device_capabilities: 0,
+            version: None,
+            device_status: None,
+            controller_error: None,
+            device_error: None,
+            operating_mode: None,
+            device_groups: None,
+            device_capabilities: None,
             instances: Vec::new(),
         }
     }
 }
+
+fn fmt_bitflags(mut bits: u8, flag_names: &[&str]) -> String {
+    let mut i: usize = 0;
+    let mut s = String::new();
+    loop {
+        let bit = (bits & 1) != 0;
+        if bit {
+            if let Some(n) = flag_names.get(i) {
+                s += n;
+            } else {
+                s += &format!("bit {i}");
+            }
+        }
+        i += 1;
+        bits >>= 1;
+        if i == 7 || bits == 0 {
+            break;
+        }
+        if bit {
+            s += ", ";
+        }
+    }
+    s
+}
+
+const INSTANCE_TYPE_NAMES: [&str; 7] = [
+    "Generic",
+    "Push button",
+    "Absolute input devices",
+    "Occupancy sensor",
+    "Light sensor",
+    "Colour sensor",
+    "General-purpose sensor",
+];
+
+// Starts at 32
+const FEATURE_TYPE_NAMES: [&str; 3] = [
+    "Feedback",
+    "Manual configuration",
+    "Luminaire-mounted Control Devices",
+];
+
+impl fmt::Display for Instance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(instance_type) = self.instance_type {
+            writeln!(
+                f,
+                "Instance type: {}",
+                INSTANCE_TYPE_NAMES
+                    .get(instance_type as usize)
+                    .unwrap_or(&"Unknown")
+            )?;
+        }
+        write!(f, "Features: ")?;
+        if self.feature_types.is_empty() {
+            writeln!(f, "<empty>")?;
+        } else {
+            let mut fi = self.feature_types.iter();
+            f.write_str(
+                FEATURE_TYPE_NAMES
+                    .get(*fi.next().unwrap() as usize)
+                    .unwrap_or(&"Unknown"),
+            )?;
+            while let Some(feature) = fi.next() {
+                write!(f,
+                    ", {}",
+                    FEATURE_TYPE_NAMES.get(*feature as usize).unwrap_or(&"Unknown"),
+                )?;
+            }
+            writeln!(f)?;
+        }
+
+        if let Some(resolution) = self.resolution {
+            writeln!(f,"Resolution: {resolution}")?;
+        }
+	Ok(())
+    }
+}
+
 impl fmt::Display for ControlInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Random address: {0} (0x{0:06x})", self.random_addr)?;
         writeln!(
             f,
             "Short address: {} (0x{:02x})",
@@ -349,7 +423,54 @@ impl fmt::Display for ControlInfo {
             self.short_addr.value()
         )?;
 
-        writeln!(f, "Version: {}.{}", self.version >> 2, self.version & 3)?;
+        if let Some(version) = self.version {
+            writeln!(f, "Version: {}.{}", version >> 2, version & 3)?;
+        }
+        if let Some(status) = self.device_status {
+            writeln!(
+                f,
+                "Device status: {}",
+                fmt_bitflags(
+                    status,
+                    &[
+                        "Input device error",
+                        "Quiescent mode",
+                        "No address",
+                        "Application active",
+                        "Application controller error",
+                        "Power cycle seen",
+                        "Reset state"
+                    ]
+                )
+            )?;
+        }
+        if let Some(capabilities) = self.device_capabilities {
+            writeln!(
+                f,
+                "Device status: {}",
+                fmt_bitflags(
+                    capabilities,
+                    &["Application controller present", "Instances present",]
+                )
+            )?;
+        }
+        if let Some(error) = self.device_error {
+            write!(f, "Input device error: ")?;
+            match error {
+                255 => writeln!(f, "Unknown error")?,
+                _ => writeln!(f, "0x{error:02x}")?,
+            }
+        }
+        if let Some(error) = self.controller_error {
+            write!(f, "Application controller error: ")?;
+            match error {
+                255 => writeln!(f, "Unknown error")?,
+                _ => writeln!(f, "0x{error:02x}")?,
+            }
+        }
+        if let Some(operating_mode) = self.operating_mode {
+            writeln!(f, "Operating mode: 0x{operating_mode:02x}")?;
+        }
 
         Ok(())
     }
@@ -365,14 +486,39 @@ async fn send_query24(
         e => Err(e),
     }
 }
+
+async fn query_device_groups(
+    d: &mut dyn DaliDriver,
+    addr: Short,
+) -> Result<Option<u32>, DaliSendResult> {
+    let mut groups = 0u32;
+    for cmd in [
+        ccmd::QUERY_DEVICE_GROUPS_24_31(addr),
+        ccmd::QUERY_DEVICE_GROUPS_16_23(addr),
+        ccmd::QUERY_DEVICE_GROUPS_8_15(addr),
+        ccmd::QUERY_DEVICE_GROUPS_0_7(addr),
+    ] {
+        groups = match send_query24(d, cmd).await? {
+            Some(b) => u32::from(b) + groups << 8,
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(groups))
+}
+
 pub async fn read_control_info(
     d: &mut dyn DaliDriver,
     addr: Short,
 ) -> Result<ControlInfo, DaliSendResult> {
     let mut info: ControlInfo = ControlInfo::new();
     info.short_addr = addr;
-    info.version = send_query24(d, ccmd::QUERY_VERSION_NUMBER(addr))
-        .await?
-        .unwrap_or(0);
+    info.version = send_query24(d, ccmd::QUERY_VERSION_NUMBER(addr)).await?;
+    info.device_status = send_query24(d, ccmd::QUERY_DEVICE_STATUS(addr)).await?;
+    info.controller_error = send_query24(d, ccmd::QUERY_APPLICATION_CONTROLLER_ERROR(addr)).await?;
+    info.device_error = send_query24(d, ccmd::QUERY_INPUT_DEVICE_ERROR(addr)).await?;
+    info.operating_mode = send_query24(d, ccmd::QUERY_OPERATING_MODE(addr)).await?;
+    info.device_groups = query_device_groups(d, addr).await?;
+
+    info.device_capabilities = send_query24(d, ccmd::QUERY_DEVICE_CAPABILITIES(addr)).await?;
     Ok(info)
 }

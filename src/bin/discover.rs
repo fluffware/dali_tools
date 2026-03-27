@@ -1,7 +1,7 @@
 use dali::control::commands_103::Commands103;
-use dali::gear::commands_102::Commands102;
 use dali::drivers::driver::OpenError;
 use dali::drivers::send_flags::PRIORITY_1;
+use dali::gear::commands_102::Commands102;
 use dali::utils::address_assignment::{clear_short_address, program_short_address};
 use dali::utils::discover::{self, Discovered};
 use dali_tools as dali;
@@ -150,10 +150,10 @@ async fn main() {
     };
 
     if control {
-	let mut commands = Commands103::from_driver(driver.as_mut(), PRIORITY_1);
-	perform_discovery(&mut commands, clear_conflicts, allocate).await;
+        let mut commands = Commands103::from_driver(driver.as_mut(), PRIORITY_1);
+        perform_discovery(&mut commands, clear_conflicts, allocate).await;
     } else {
-	let mut commands = Commands102::from_driver(driver.as_mut(), PRIORITY_1);
-	perform_discovery(&mut commands, clear_conflicts, allocate).await;
+        let mut commands = Commands102::from_driver(driver.as_mut(), PRIORITY_1);
+        perform_discovery(&mut commands, clear_conflicts, allocate).await;
     }
 }

@@ -1,3 +1,14 @@
+use std::cmp::{max, min};
+
+trait Decoder16 {
+    fn decode_device_cmd(&self, state: &DecoderState, pkt: &[u8; 2]) -> String;
+}
+
+pub struct DecoderState {
+    dtr: [u8; 3],
+    extended: Option<Box<dyn Decoder16>>, // Use for next device type specific command
+}
+
 const CMD_DESCR_16: [&str; 256] = [
     "Off",
     "Up",
@@ -357,51 +368,6 @@ fn decode_addr(addr: u8) -> String {
     }
 }
 
-fn decode_16bit(pkt: &[u8]) -> String {
-    let str;
-    assert!(pkt.len() >= 2);
-    if (pkt[0] & 1) != 0 {
-        // Command
-        if (pkt[0] & 0xe0) == 0xa0 || (pkt[0] & 0xe0) == 0xc0 {
-            // Special command
-            str = match pkt[0] {
-                0xa1 => "Terminate".to_string(),
-                0xa3 => {
-                    format!("Set DTR = {} (0x{:02x})", pkt[1], pkt[1])
-                }
-                0xc3 => {
-                    format!("Set DTR1 = {} (0x{:02x})", pkt[1], pkt[1])
-                }
-                0xc5 => {
-                    format!("Set DTR2 = {} (0x{:02x})", pkt[1], pkt[1])
-                }
-                0xa5 => {
-                    format!("Initialise {} (0x{:02x})", pkt[1], pkt[1])
-                }
-                0xa7 => "Randomise".to_string(),
-                0xa9 => "Compare".to_string(),
-                0xab => "Withdraw".to_string(),
-                0xb1 => format!("Search address high 0x{:02x}", pkt[1]),
-                0xb3 => format!("Search address middle 0x{:02x}", pkt[1]),
-                0xb5 => format!("Search address low 0x{:02x}", pkt[1]),
-                0xb7 => format!("Program short address {}", (pkt[1] >> 1) & 0x3f),
-                0xb9 => format!("Verify short address {}", (pkt[1] >> 1) & 0x3f),
-                0xbb => "Query short address".to_string(),
-                0xbd => "Physical selection".to_string(),
-                0xc1 => format!("Enable device type {}", pkt[1]),
-                0xc7 => format!("Write memory location: 0x{:02x}", pkt[1]),
-                0xc9 => format!("Write memory location (no reply): 0x{:02x}", pkt[1]),
-                _ => "Unknown special command".to_string(),
-            }
-        } else {
-            str = decode_addr(pkt[0]) + ": " + CMD_DESCR_16[usize::from(pkt[1])];
-        }
-    } else {
-        str = decode_addr(pkt[0]) + ": " + &format!("Set power = {}", pkt[1]);
-    }
-    str
-}
-
 fn decode_cmd_addr_24bit(addr: u8) -> Option<String> {
     if addr & 0xfe == 0xfe {
         // Broadcast
@@ -457,8 +423,7 @@ fn source_instance_type(instance_type: u8) -> String {
     format!("Instance type: {}", decode_instance_type(instance_type))
 }
 
-fn decode_event_source(source: &[u8]) -> String {
-    assert!(source.len() >= 2);
+fn decode_event_source(source: &[u8; 2]) -> String {
     if (source[0] & 1) != 0 {
         return "Illegal event".to_string();
     }
@@ -480,8 +445,7 @@ fn decode_event_source(source: &[u8]) -> String {
     }
 }
 
-fn decode_special_command(pkt: &[u8]) -> String {
-    assert!(pkt.len() >= 3);
+fn decode_special_command(pkt: &[u8; 3]) -> String {
     match pkt[0] {
         0xc1 => match pkt[1] {
             0x00 if pkt[2] == 0 => "Terminate".to_string(),
@@ -556,37 +520,224 @@ fn decode_special_command(pkt: &[u8]) -> String {
     }
 }
 
-fn decode_24bit(pkt: &[u8]) -> String {
-    let str;
-    if (pkt[0] & 1) == 1 {
-        // Command frame
-        let addr = decode_cmd_addr_24bit(pkt[0]);
-        if let Some(addr_str) = addr {
-            if pkt[1] == 0xfe {
-                // Device command
-                str = addr_str + ": " + &decode_device_command(pkt[2]);
-            } else {
-                // Instance command
-                str = addr_str + ": " + &decode_instance_command(pkt[2]);
-            }
-        } else {
-            str = decode_special_command(pkt);
-        }
-    } else {
-        let value = ((u16::from(pkt[1]) & 0x03) << 8) | u16::from(pkt[2]);
-        str = "(".to_string()
-            + &decode_event_source(&pkt[0..2])
-            + "): "
-            + &format!("{} (0x{:03x})", value, value);
+struct Dt8Decoder;
+
+impl Dt8Decoder {
+    fn new() -> Dt8Decoder {
+        Dt8Decoder
     }
-    str
 }
 
-pub fn decode_packet(pkt: &[u8]) -> String {
-    let len = pkt.len();
-    match len {
-        3 => decode_24bit(pkt),
-        2 => decode_16bit(pkt),
-        _ => "Invalid packet length".to_string(),
+fn value16(state: &DecoderState) -> u16 {
+    u16::from(state.dtr[0]) | u16::from(state.dtr[1]) << 8
+}
+
+fn linked_status(ctrl: u8, mask: u8) -> &'static str {
+    if (ctrl & mask) != 0 {
+        "Linked"
+    } else {
+        "Unlinked"
+    }
+}
+
+impl Decoder16 for Dt8Decoder {
+    fn decode_device_cmd(&self, state: &DecoderState, pkt: &[u8; 2]) -> String {
+        if (pkt[0] & 1) != 0 {
+            match pkt[1] {
+                0xe0 => format!(
+                    "Set temporary x-coordinate ({:.4})",
+                    (value16(state) as f32) / 65536.0
+                ),
+                0xe1 => format!(
+                    "Set temporary y-coordinate ({:.4})",
+                    (value16(state) as f32) / 65536.0
+                ),
+                0xe2 => "Activate".to_string(),
+                0xe3 => "x-coordinate step up".to_string(),
+                0xe4 => "x-coordinate step down".to_string(),
+                0xe5 => "y-coordinate step up".to_string(),
+                0xe6 => "y-coordinate step down".to_string(),
+                0xe7 => format!(
+                    "Set temporary colour temperature ({} K)",
+                    1_000_000 / max(1, value16(state)) as u32
+                ),
+                0xe8 => "Colour temperature step cooler".to_string(),
+                0xe9 => "Colour temperature step warmer".to_string(),
+                0xea => format!(
+                    "Set temporary primary N dimlevel (primary {}: {:.4})",
+                    state.dtr[2],
+                    (1.0 / 65536.0) * (value16(state) as f32),
+                ),
+                0xeb => format!(
+                    "Set temporary RGB dimlevel (R: {}, G: {}, B: {})",
+                    state.dtr[0], state.dtr[1], state.dtr[2]
+                ),
+                0xec => format!(
+                    "Set temporary WAF dimlevel (W: {}, A: {}, F: {})",
+                    state.dtr[0], state.dtr[1], state.dtr[2]
+                ),
+                0xed => {
+                    format!("Set temporary RGBWAF control (R: {}, G: {}, B: {}, W: {}, A: {}, F: {}, Type: {})",
+			   linked_status(state.dtr[0], 0x01),
+			   linked_status(state.dtr[0], 0x02),
+			   linked_status(state.dtr[0], 0x04),
+			   linked_status(state.dtr[0], 0x08),
+			   linked_status(state.dtr[0], 0x10),
+			   linked_status(state.dtr[0], 0x20),
+			   ["Channel", "Colour", "Normalized colour", "Reserved"][(state.dtr[0] >>6) as usize],
+			   )
+                }
+                0xee => "Copy report to temporary".to_string(),
+
+                0xf0 => format!(
+                    "Store TY primary N (primary {}: {:.4} lumen)",
+                    state.dtr[2],
+                    0.5 * (value16(state) as f32),
+                ),
+                0xf1 => format!("Store xy-coordinate primary N (primary {})", state.dtr[2]),
+                0xf2 => format!(
+                    "Store colour temperature limit ({} K, {})",
+                    1_000_000 / max(1, value16(state)) as u32,
+                    ["Coolest", "Warmest", "Physical coolest", "Physical warmest"]
+                        .get(state.dtr[2] as usize)
+                        .unwrap_or(&"Ignored")
+                ),
+                _ => "Unknown DT8 command".to_string(),
+            }
+        } else {
+            "Unknown DT8 command".to_string()
+        }
+    }
+}
+
+impl DecoderState {
+    pub fn new() -> DecoderState {
+        DecoderState {
+            dtr: [0, 0, 0],
+            extended: None,
+        }
+    }
+
+    fn decode_16bit(&mut self, pkt: &[u8; 2]) -> String {
+        let str;
+        assert!(pkt.len() >= 2);
+        if (pkt[0] & 1) != 0 {
+            // Command
+            if (pkt[0] & 0xe0) == 0xa0 || (pkt[0] & 0xe0) == 0xc0 {
+                // Special command
+                str = match pkt[0] {
+                    0xa1 => "Terminate".to_string(),
+                    0xa3 => {
+                        self.dtr[0] = pkt[1];
+                        format!("Set DTR = {} (0x{:02x})", pkt[1], pkt[1])
+                    }
+                    0xc3 => {
+                        self.dtr[1] = pkt[1];
+                        format!("Set DTR1 = {} (0x{:02x})", pkt[1], pkt[1])
+                    }
+                    0xc5 => {
+                        self.dtr[2] = pkt[1];
+                        format!("Set DTR2 = {} (0x{:02x})", pkt[1], pkt[1])
+                    }
+                    0xa5 => {
+                        format!("Initialise {} (0x{:02x})", pkt[1], pkt[1])
+                    }
+                    0xa7 => "Randomise".to_string(),
+                    0xa9 => "Compare".to_string(),
+                    0xab => "Withdraw".to_string(),
+                    0xb1 => format!("Search address high 0x{:02x}", pkt[1]),
+                    0xb3 => format!("Search address middle 0x{:02x}", pkt[1]),
+                    0xb5 => format!("Search address low 0x{:02x}", pkt[1]),
+                    0xb7 => format!("Program short address {}", (pkt[1] >> 1) & 0x3f),
+                    0xb9 => format!("Verify short address {}", (pkt[1] >> 1) & 0x3f),
+                    0xbb => "Query short address".to_string(),
+                    0xbd => "Physical selection".to_string(),
+                    0xc1 => {
+                        match pkt[1] {
+                            8 => {
+                                self.extended = Some(Box::new(Dt8Decoder::new()));
+                            }
+                            _ => self.extended = None,
+                        };
+                        format!("Enable device type {}", pkt[1])
+                    }
+                    0xc7 => format!("Write memory location: 0x{:02x}", pkt[1]),
+                    0xc9 => format!("Write memory location (no reply): 0x{:02x}", pkt[1]),
+
+                    _ => "Unknown special command".to_string(),
+                };
+            } else {
+                /* Device command */
+                let cmd_descr = match pkt[1] {
+                    0xe0..0xfe => {
+                        if let Some(decoder) = self.extended.take() {
+                            decoder.decode_device_cmd(&self, pkt)
+                        } else {
+                            format!("Application extended command 0x{:02x}", pkt[0])
+                        }
+                    }
+                    0x2a => format!("Store DTR as max level ({})", self.dtr[0]),
+                    0x2b => format!("Store DTR as min level ({})", self.dtr[0]),
+                    0x2c => format!("Store DTR as system failure level ({})", self.dtr[0]),
+                    0x2d => format!("Store DTR as power on level ({})", self.dtr[0]),
+                    0x2e => {
+                        if self.dtr[0] == 0 {
+                            "Store DTR as fade time (Extended)".to_string()
+                        } else {
+                            format!(
+                                "Store DTR as fade time ({:.1})",
+                                0.5 * ((1u32 << min(15, self.dtr[0] as u32)) as f32).sqrt()
+                            )
+                        }
+                    }
+                    0x30 => format!(
+                        "Store DTR as extend fade time ({:.1} s)",
+                        (self.dtr[0] & 0x0f) as f32
+                            * [0.0, 0.1, 1.0, 10.0, 60.0]
+                                .get((self.dtr[0] >> 4) as usize)
+                                .unwrap_or(&0.0)
+                    ),
+                    _ => CMD_DESCR_16[usize::from(pkt[1])].to_string(),
+                };
+                str = decode_addr(pkt[0]) + ": " + &cmd_descr;
+            }
+        } else {
+            str = decode_addr(pkt[0]) + ": " + &format!("Set power = {}", pkt[1]);
+        }
+        str
+    }
+    fn decode_24bit(&mut self, pkt: &[u8; 3]) -> String {
+        let str;
+        if (pkt[0] & 1) == 1 {
+            // Command frame
+            let addr = decode_cmd_addr_24bit(pkt[0]);
+            if let Some(addr_str) = addr {
+                if pkt[1] == 0xfe {
+                    // Device command
+                    str = addr_str + ": " + &decode_device_command(pkt[2]);
+                } else {
+                    // Instance command
+                    str = addr_str + ": " + &decode_instance_command(pkt[2]);
+                }
+            } else {
+                str = decode_special_command(pkt);
+            }
+        } else {
+            let value = ((u16::from(pkt[1]) & 0x03) << 8) | u16::from(pkt[2]);
+            str = "(".to_string()
+                + &decode_event_source(&pkt[0..1].try_into().unwrap())
+                + "): "
+                + &format!("{} (0x{:03x})", value, value);
+        }
+        str
+    }
+
+    pub fn decode_packet(&mut self, pkt: &[u8]) -> String {
+        let len = pkt.len();
+        match len {
+            3 => self.decode_24bit(pkt.try_into().unwrap()),
+            2 => self.decode_16bit(pkt.try_into().unwrap()),
+            _ => "Unhandled packet length".to_string(),
+        }
     }
 }

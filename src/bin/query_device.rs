@@ -1,8 +1,8 @@
 use dali::common::address::DisplayValue;
 use dali::common::address::Short;
 use dali::control::commands_103::Commands103;
-use dali::gear::commands_102::Commands102;
 use dali::drivers::driver::OpenError;
+use dali::gear::commands_102::Commands102;
 use dali::utils::device_info;
 use dali::utils::memory_banks;
 use dali_tools as dali;
@@ -126,7 +126,7 @@ async fn main() {
                 println!("{}", info);
             }
         } else {
-	    let mut commands = Commands102::new(&mut *driver);
+            let mut commands = Commands102::new(&mut *driver);
             let long = commands.query_random_address(addr).await;
             if let Ok(long) = long {
                 println!("Long address: 0x{:06x}", long);

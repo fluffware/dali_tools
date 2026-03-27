@@ -32,6 +32,7 @@ async fn main() {
             return;
         }
     };
+    let mut decoder = decode::DecoderState::new();
     loop {
         match driver.next_bus_event().await {
             Ok(DaliBusEvent {
@@ -47,14 +48,14 @@ async fn main() {
                             print!(" {:02x}", b);
                         }
                         print!(" ");
-                        println!("{}", decode::decode_packet(pkt))
+                        println!("{}", decoder.decode_packet(pkt))
                     }
                     DaliBusEventType::Frame16(ref pkt) => {
                         for b in pkt {
                             print!(" {:02x}", b);
                         }
                         print!("    ");
-                        println!("{}", decode::decode_packet(pkt))
+                        println!("{}", decoder.decode_packet(pkt))
                     }
                     _ => println!("{:?}", event_type),
                 }

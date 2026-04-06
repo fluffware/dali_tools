@@ -130,7 +130,7 @@ pub trait DaliDriver: Send {
     fn send_frame(&mut self, cmd: DaliFrame, flags: Flags) -> DynFuture<'_, DaliSendResult>;
 
     /// Wait for next_bus_event. If there already are unread events
-    /// queued, then return immeediately.
+    /// queued, then return immediately.
     fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult>;
 
     /// Current time time of driver

@@ -45,7 +45,7 @@ required-features = ["helvar510_driver"]
 
 [[bin]]
 name = "manual_identify"
-path = "src/bin/manual_identify.rs"
+path = "src/bin/manual_identify/main.rs"
 required-features = ["httpd"]
 
 

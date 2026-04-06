@@ -1,4 +1,3 @@
-use std::cmp;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::future::{self};
@@ -6,8 +5,6 @@ use std::net::IpAddr;
 use std::ops::RangeBounds;
 use std::pin::Pin;
 use std::process::ExitCode;
-use std::sync::atomic::AtomicU8;
-use std::sync::atomic::Ordering;
 use std::sync::atomic::{self, AtomicU16};
 use std::sync::{Arc, Mutex as BlockingMutex, RwLock};
 use std::task::{Context, Poll};
@@ -19,48 +16,69 @@ use std::future::Future;
 
 use hyper::{Body, Request, Response};
 use hyper::{header, http};
+use serde::Serialize;
 use serde::Serializer;
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::Duration;
 
-use dali::common::address::Short;
 use dali::common::defs::MASK;
-use dali::common::driver_commands::DriverCommands;
-use dali::drivers::command_utils::send16;
 use dali::drivers::driver::OpenError;
-use dali::drivers::driver::{DaliDriver, DaliSendResult};
-use dali::drivers::send_flags::NO_FLAG;
-use dali::drivers::send_flags::PRIORITY_1;
-use dali::gear::address::Address;
-use dali::gear::cmd_defs as cmd;
-use dali::gear::commands_102::Commands102;
-use dali::gear::status::GearStatus;
 use dali::httpd::{self, ServerConfig};
-use dali::utils::address_assignment::program_short_addresses;
-use dali_tools::common::commands::Commands;
 //use dali::utils::filtered_vec::FilteredVec;
 use dali_tools as dali;
+mod configuration;
+mod dali_ident;
+use configuration::{
+    ConfigurationDriver, ConfigurationId, ConfigurationInfo, GearConfiguration, GearId,
+};
+use dali_ident::DaliConfigurationDriver;
 
 type DynResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+//type DynResultFuture<T> = dyn Future<Output = Result<T, Box<dyn Error + Send + Sync>>>;
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
-pub struct GearData {
-    long: u32,
-    old_addr: Option<u8>,
-    new_addr: Option<u8>,
+type SyncConfigurationDriver = Arc<dyn ConfigurationDriver>;
+
+#[derive(Clone, Debug, Serialize)]
+pub enum ConfigurationState {
+    Unavailable,
+    Unconfigured,                 // Present but no known configuration
+    CurrentConf(ConfigurationId), // The gear has been automatically matched to this configuration
+    NewConf(ConfigurationId),     // Change to this configuration when commited
+}
+
+impl Serialize for GearId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u16(Into::into(self.clone()))
+    }
+}
+impl Serialize for ConfigurationId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u16(Into::into(self.clone()))
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+struct GearData {
+    id: GearId,
+    label: String,
+    conf: ConfigurationState,
 }
 
 struct GearState {
-    current_gear: usize,
-    target_gear: usize,
+    current_gear: usize, // Index of currently selected gear
+    target_gear: usize,  // Index of gear to move selection to
     gears: Vec<GearData>,
+    configurations: Vec<ConfigurationInfo>,
 }
 
 pub struct IdentificationCtxt {
     state: RwLock<GearState>,
-    low_level: AtomicU8,  // Set to MASK for min level
-    high_level: AtomicU8, // Set to MASK for max level
 }
 
 impl IdentificationCtxt {
@@ -101,124 +119,81 @@ impl Default for IdentificationCtxt {
             current_gear: 0,
             target_gear: 0,
             gears: Vec::new(),
+            configurations: Vec::new(),
         };
         IdentificationCtxt {
             state: RwLock::new(state),
-            low_level: AtomicU8::new(MASK),
-            high_level: AtomicU8::new(MASK),
         }
     }
-}
-
-type SyncDriver = Arc<Mutex<Box<dyn DaliDriver>>>;
-
-async fn find<F>(driver: &SyncDriver, found: &mut F) -> DynResult<()>
-where
-    F: FnMut(GearData),
-{
-    for addr in 0..64 {
-        debug!("Checking {}", addr);
-        let driver = &mut **driver.lock().await;
-        let mut cmd = Commands102::from_driver(driver, PRIORITY_1);
-        let status = match cmd.query(cmd::QUERY_STATUS(Short::new(addr))).await {
-            Ok(s) => Some(GearStatus::new(s)),
-            Err(DaliSendResult::Timeout) => None,
-            Err(e) => return Err(e.into()),
-        };
-        if let Some(status) = status {
-            info!("{}: Status: {}\r\n", addr, status);
-            if let Ok(l) = cmd.query_random_address(Short::new(addr)).await {
-                info!("{}: Long: {:06x}\r\n", addr, l);
-                found(GearData {
-                    long: l,
-                    old_addr: Some(addr),
-                    new_addr: None,
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn set_low_level(driver: &SyncDriver, low_level: u8, addr: &Address) -> DynResult<()> {
-    let driver = &mut **driver.lock().await;
-    match if low_level == MASK {
-        send16::cmd(driver, cmd::RECALL_MIN_LEVEL(*addr), NO_FLAG).await
-    } else {
-        send16::device_level(driver, *addr, low_level, NO_FLAG).await
-    } {
-        DaliSendResult::Ok => {}
-        e => return Err(e.into()),
-    }
-    Ok(())
-}
-
-async fn set_high_level(driver: &SyncDriver, high_level: u8, addr: &Address) -> DynResult<()> {
-    let driver = &mut **driver.lock().await;
-    match if high_level == MASK {
-        send16::cmd(driver, cmd::RECALL_MAX_LEVEL(*addr), NO_FLAG).await
-    } else {
-        send16::device_level(driver, *addr, high_level, NO_FLAG).await
-    } {
-        DaliSendResult::Ok => {}
-        e => return Err(e.into()),
-    }
-    Ok(())
 }
 
 fn reply_scan_update(ctxt: &IdentificationCtxt) -> String {
     ctxt.get_state(|state| {
-        let index = state.current_gear as u8;
+        let index = state.current_gear;
         let gears = &state.gears;
-        let length = gears.len() as u8;
-        let mut current_address = MASK;
-        let mut new_address = MASK;
+        let length = gears.len();
+        let gear_id;
+        let new_conf;
+        let gear_id_label : String;
+        let new_conf_label : String;
         if index < length
-            && let Some(&GearData {
-                old_addr, new_addr, ..
+            && let Some(GearData {
+                id, conf, label, ..
             }) = gears.get(usize::from(index))
         {
-            current_address = old_addr.unwrap_or(MASK);
-            new_address = new_addr.unwrap_or(MASK);
+            gear_id = Some(id.clone());
+            new_conf = conf.clone();
+            gear_id_label = label.clone();
+            match conf {
+                ConfigurationState::CurrentConf(id) | ConfigurationState::NewConf(id) => {
+                    if let Some(info) = state.configurations.iter().find(|c| c.id == *id) {
+                        new_conf_label = info.label.clone();
+                    } else {
+                        new_conf_label = "-".to_string();
+                    }
+                }
+                _ => {
+                    new_conf_label = "-".to_string();
+                }
+            }
+        } else {
+            gear_id = None;
+            new_conf = ConfigurationState::Unconfigured;
+            gear_id_label = "-".to_string();
+            new_conf_label = "-".to_string();
         }
-
         serde_json::to_string(&ScanUpdate {
-            current_address,
-            new_address,
-            index,
-            length,
+            gear_id: gear_id.map(|i| Into::<u16>::into(i)),
+            gear_id_label,
+            new_conf,
+            new_conf_label,
+            index: index as u16,
+            length: gears.len() as u16,
         })
         .unwrap()
     })
 }
-async fn clear_scan(driver: &SyncDriver, ctxt: &Arc<IdentificationCtxt>) -> DynResult<()> {
-    set_low_level(
-        driver,
-        ctxt.low_level.load(Ordering::Relaxed),
-        &Address::Broadcast,
-    )
-    .await?;
+async fn clear_scan(
+    driver: &SyncConfigurationDriver,
+    ctxt: &Arc<IdentificationCtxt>,
+) -> DynResult<()> {
+    driver.set_all_low().await?;
 
-    let addr: Option<u8> = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr));
-    if let Some(addr) = addr {
-        set_high_level(
-            driver,
-            ctxt.high_level.load(Ordering::Relaxed),
-            &Address::Short(Short::new(addr)),
-        )
-        .await?;
+    if let Some(id) = ctxt.get_current_gear(|gear| gear.and_then(|g| Some(g.id.clone()))) {
+        driver.set_high(id).await?;
     }
     Ok(())
 }
+
 async fn handle_commands(
-    driver: &SyncDriver,
+    driver: &SyncConfigurationDriver,
     ctxt: &Arc<IdentificationCtxt>,
     cmd: DaliCommands,
     current_high: &mut bool,
 ) -> DynResult<DaliCommandStatus> {
     match cmd {
         DaliCommands::NoCommand => {}
-        DaliCommands::ScanAddress { index } => {
+        DaliCommands::ScanIndex { index } => {
             ctxt.modify_state(|state| {
                 state.target_gear = usize::from(index);
             });
@@ -229,13 +204,27 @@ async fn handle_commands(
                 s.target_gear = 0;
                 s.current_gear = 0;
             });
-            find(driver, &mut |gd| {
-                ctxt.modify_state(|s| {
-                    s.gears.push(gd);
-                })
-            })
-            .await?;
+            let cb_ctxt = ctxt.clone();
+            driver
+                .find_all(Box::new(move |gi| {
+                    let gd = GearData {
+                        id: gi.id,
+                        label: gi.label,
+                        conf: match gi.conf {
+                            Some(id) => ConfigurationState::CurrentConf(id),
+                            None => ConfigurationState::Unconfigured,
+                        },
+                    };
+                    cb_ctxt.modify_state(|s| {
+                        s.gears.push(gd);
+                    })
+                }))
+                .await?;
             clear_scan(driver, ctxt).await?;
+	    let configurations = driver.configurations();
+	    ctxt.modify_state(|s| {
+		s.configurations = configurations;
+	    });
             *current_high = true;
         }
         /*
@@ -243,62 +232,59 @@ async fn handle_commands(
                 reply_scan_update(cmd_req.reply, ctxt)?;
         }
         */
-        DaliCommands::NewAddress { address, index } => {
+        DaliCommands::NewConfiguration { index, conf_id } => {
             ctxt.modify_state(|state| {
                 let gears = &mut state.gears;
-                if let Some(gear) = gears.get_mut(usize::from(index)).as_mut()
-                    && (0..64).contains(&address)
-                {
-                    debug!("new_addr = {}", address);
-                    gear.new_addr = Some(address);
+                if let Some(gear) = gears.get_mut(usize::from(index)).as_mut() {
+                    debug!("new_conf = {:?}", conf_id);
+                    gear.conf = ConfigurationState::NewConf(conf_id);
                 }
             });
         }
-        DaliCommands::ChangeAddresses => {
-            let driver = &mut **driver.lock().await;
-            let mut swaps = Vec::new();
-            ctxt.modify_state(|state| {
-                let gears = &mut state.gears;
-                for g in gears.iter_mut() {
-                    if let (Some(old_addr), Some(new_addr)) = (g.old_addr, g.new_addr) {
-                        swaps.push((Short::new(old_addr), Short::new(new_addr)));
-                        g.old_addr = g.new_addr.take();
+        DaliCommands::CommitChanges => {
+            let gears = ctxt.get_state(|state| state.gears.clone());
+            let mut gear_conf = Vec::new();
+            for gear in gears {
+                match gear.conf {
+                    ConfigurationState::NewConf(conf) => {
+                        let id = gear.id;
+                        gear_conf.push(GearConfiguration { id, conf });
                     }
+                    _ => {}
                 }
-            });
-            let mut cmd = Commands102::from_driver(driver, PRIORITY_1);
-            program_short_addresses(&mut cmd, &swaps).await?;
-        }
-        DaliCommands::Sort => {
-            ctxt.modify_state(|state| {
-                let gears = &mut state.gears;
-                state.target_gear = 0;
-                state.current_gear = 0;
-                // First unallocated sorted by long address
-                // Second not remappped sorted by short address
-                // Last remapped sorted by new short address
-                gears.sort_by(|a, b| match (a.new_addr, b.new_addr) {
-                    (Some(a), Some(b)) => a.cmp(&b),
-                    (Some(_), None) => cmp::Ordering::Greater,
-                    (None, Some(_)) => cmp::Ordering::Less,
-                    (None, None) => match (a.old_addr, b.old_addr) {
-                        (Some(a), Some(b)) => a.cmp(&b),
-                        (Some(_), None) => cmp::Ordering::Greater,
-                        (None, Some(_)) => cmp::Ordering::Less,
-                        (None, None) => a.long.cmp(&b.long),
-                    },
-                });
-            });
-            clear_scan(driver, ctxt).await?;
-            *current_high = true;
+            }
+            driver.commit(gear_conf).await?;
         } /*
-                       DaliCommands::RequestGearList => {
-                           let gears = ctxt.gears.lock().unwrap();
-                           let list: Vec<GearData> = gears.iter().cloned().collect();
-                           let _ = cmd_req.reply.send(DaliReplies::GearList(list));
-                   }
-                              program_short_addresses(driver, &swaps).await?;
-          */
+          DaliCommands::Sort => {
+              ctxt.modify_state(|state| {
+                  let gears = &mut state.gears;
+                  state.target_gear = 0;
+                  state.current_gear = 0;
+                  // First unallocated sorted by long address
+                  // Second not remappped sorted by short address
+                  // Last remapped sorted by new short address
+                  gears.sort_by(|a, b| match (a.new_addr, b.new_addr) {
+                      (Some(a), Some(b)) => a.cmp(&b),
+                      (Some(_), None) => cmp::Ordering::Greater,
+                      (None, Some(_)) => cmp::Ordering::Less,
+                      (None, None) => match (a.old_addr, b.old_addr) {
+                          (Some(a), Some(b)) => a.cmp(&b),
+                          (Some(_), None) => cmp::Ordering::Greater,
+                          (None, Some(_)) => cmp::Ordering::Less,
+                          (None, None) => a.long.cmp(&b.long),
+                      },
+                  });
+              });
+              clear_scan(driver, ctxt).await?;
+              *current_high = true;
+          }*/ /*
+                         DaliCommands::RequestGearList => {
+                             let gears = ctxt.gears.lock().unwrap();
+                             let list: Vec<GearData> = gears.iter().cloned().collect();
+                             let _ = cmd_req.reply.send(DaliReplies::GearList(list));
+                     }
+                                program_short_addresses(driver, &swaps).await?;
+            */
     }
     Ok(DaliCommandStatus::Done)
 }
@@ -435,18 +421,19 @@ fn decode_get_request(
             return bad_request("Missing or invalid 'cmd'");
         };
         let cmd = match u32::try_from(cmd_arg).unwrap() {
-            DaliCommands::SCAN_ADDRESS => {
-                let index = get_int_arg(&args, "index", 0..=63)? as u8;
-                DaliCommands::ScanAddress { index }
+            DaliCommands::SCAN_INDEX => {
+                let index = get_int_arg(&args, "index", 0..=63)? as u16;
+                DaliCommands::ScanIndex { index }
             }
             DaliCommands::FIND_ALL => DaliCommands::FindAll,
-            DaliCommands::NEW_ADDRESS => {
-                let address = get_int_arg(&args, "address", 0..=63)? as u8;
-                let index = get_int_arg(&args, "index", 0..=63)? as u8;
-                DaliCommands::NewAddress { address, index }
+            DaliCommands::NEW_CONFIGURATION => {
+                let conf_id =
+                    ConfigurationId::try_from(get_int_arg(&args, "address", 1..)? as u16).unwrap();
+                let index = get_int_arg(&args, "index", 0..)? as u16;
+                DaliCommands::NewConfiguration { conf_id, index }
             }
-            DaliCommands::CHANGE_ADDRESSES => DaliCommands::ChangeAddresses,
-            DaliCommands::SORT => DaliCommands::Sort,
+            DaliCommands::COMMIT_CHANGES => DaliCommands::CommitChanges,
+            //DaliCommands::SORT => DaliCommands::Sort,
             _ => return bad_request("Unknown command number"),
         };
         /*
@@ -530,20 +517,25 @@ enum DaliSetIntensity {
 #[derive(Clone, Debug)]
 enum DaliCommands {
     NoCommand,
-    ScanAddress { index: u8 },
+    ScanIndex {
+        index: u16,
+    },
     FindAll,
-    NewAddress { address: u8, index: u8 },
-    ChangeAddresses,
-    Sort,
+    NewConfiguration {
+        index: u16,
+        conf_id: ConfigurationId,
+    },
+    CommitChanges,
+    //Sort,
 }
 
 impl DaliCommands {
     pub const NO_COMMAND: u32 = 0;
-    pub const SCAN_ADDRESS: u32 = 1;
+    pub const SCAN_INDEX: u32 = 1;
     pub const FIND_ALL: u32 = 2;
-    pub const NEW_ADDRESS: u32 = 3;
-    pub const CHANGE_ADDRESSES: u32 = 4;
-    pub const SORT: u32 = 5;
+    pub const NEW_CONFIGURATION: u32 = 3;
+    pub const COMMIT_CHANGES: u32 = 4;
+    //pub const SORT: u32 = 5;
 }
 
 impl serde::Serialize for DaliCommands {
@@ -554,11 +546,11 @@ impl serde::Serialize for DaliCommands {
         use DaliCommands::*;
         serializer.serialize_u32(match self {
             NoCommand => Self::NO_COMMAND,
-            ScanAddress { .. } => Self::SCAN_ADDRESS,
+            ScanIndex { .. } => Self::SCAN_INDEX,
             FindAll => Self::FIND_ALL,
-            NewAddress { .. } => Self::NEW_ADDRESS,
-            ChangeAddresses => Self::CHANGE_ADDRESSES,
-            Sort => Self::SORT,
+            NewConfiguration { .. } => Self::NEW_CONFIGURATION,
+            CommitChanges => Self::COMMIT_CHANGES,
+            //Sort => Self::SORT,
         })
     }
 }
@@ -588,10 +580,12 @@ enum DaliReplies {
 
 #[derive(Serialize, Debug)]
 struct ScanUpdate {
-    current_address: u8,
-    new_address: u8,
-    index: u8,
-    length: u8,
+    gear_id: Option<u16>,
+    gear_id_label: String,
+    new_conf: ConfigurationState,
+    new_conf_label: String,
+    index: u16,
+    length: u16,
 }
 
 struct DaliCommandRequest {
@@ -600,7 +594,7 @@ struct DaliCommandRequest {
 }
 
 async fn cmd_thread(
-    driver: SyncDriver,
+    driver: SyncConfigurationDriver,
     ctxt: Arc<IdentificationCtxt>,
     mut cmd_req: mpsc::Receiver<DaliCommandRequest>,
     cmd_log: CmdLog,
@@ -641,21 +635,21 @@ async fn cmd_thread(
             _ = &mut tick_blink => {
                 tick_blink.set(tokio::time::sleep(Duration::from_millis(300)).fuse());
 
-                let addr: Option<u8> = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr));
-                if let Some(addr) = addr  && let Err(e) = {
+                let gear_id: Option<GearId> = ctxt.get_current_gear(|gear| gear.and_then(|g| Some(g.id.clone())));
+                if let Some(gear_id) = gear_id  {
                     if current_high {
                         current_high = false;
-                            set_low_level(&driver,
-                                          ctxt.low_level.load(Ordering::Relaxed),
-                                          &Address::Short(Short::new(addr))).await
+            if let Err(e) = driver.set_low(gear_id).await {
+                error!("Failed to set low level while blinking: {e}");
+            }
                     } else {
-                            current_high = true;
-                        set_high_level(&driver,
-                                       ctxt.high_level.load(Ordering::Relaxed),
-                                       &Address::Short(Short::new(addr))).await
-                        }
-                } {
-                    error!("Failed to blink: {}",e);
+                        current_high = true;
+                        if let Err(e) = driver.set_high(gear_id).await {
+                error!("Failed to set low level while blinking: {e}");
+            }
+                    }
+                } else {
+                    error!("Failed to blink");
                 }
             }
             _ = future::ready(()), if step_gear => {
@@ -664,38 +658,34 @@ async fn cmd_thread(
                 tick_blink.set(Fuse::terminated());
 
                 if current_high
-            && let Some(addr) = ctxt.get_current_gear(|gear| gear.and_then(|g| g.old_addr)) {
+            && let Some(gear_id) = ctxt.get_current_gear(|gear| gear.and_then(|g| Some(g.id.clone()))) {
             if let Err(e) =
-                set_high_level(&driver,
-                       ctxt.high_level.load(Ordering::Relaxed),
-                       &Address::Short(Short::new(addr))).await {
+                driver.set_high(gear_id).await {
                 error!("Failed to set high level: {}",e);
                 }
             current_high = true;
             }
 
-                let (step_up,addr)  = ctxt.modify_state(|state| {
+                let (step_up,gear_id)  = ctxt.modify_state(|state| {
                     if state.current_gear < state.target_gear {
                         state.current_gear += 1;
 
-                        (true, state.gears.get(state.current_gear).and_then(|g| g.old_addr))
+                        (true, state.gears.get(state.current_gear as usize).and_then(|g| Some(g.id.clone())))
                     } else {
                         state.current_gear -= 1;
-                        (false, state.gears.get(state.current_gear+1).and_then(|g| g.old_addr))
+                        (false, state.gears.get(state.current_gear as usize +1).and_then(|g| Some(g.id.clone())))
                     }});
-                if let Some(addr) = addr {
+                if let Some(gear_id) = gear_id {
                     if step_up {
                         if let Err(e) =
-                            set_high_level(&driver,
-                                           ctxt.high_level.load(Ordering::Relaxed), &Address::Short(Short::new(addr))).await {
-                                error!("Failed to set high level: {}",e);
-                            }
+                            driver.set_high(gear_id).await {
+                error!("Failed to set high level: {}",e);
+                }
             current_high = true;
-                    } else if let Err(e) =
-                        set_low_level(&driver,
-                                      ctxt.low_level.load(Ordering::Relaxed), &Address::Short(Short::new(addr))).await {
-                            error!("Failed to set high level: {}",e);
-                        }
+            } else if let Err(e) =
+            driver.set_low(gear_id).await {
+                error!("Failed to set high level: {}",e);
+            }
                 }
                 step_gear = ctxt.get_state(|s| s.current_gear != s.target_gear);
 
@@ -750,9 +740,15 @@ async fn main() -> ExitCode {
         }
     };
     let driver = Arc::new(Mutex::new(driver));
+    let driver = Arc::new(DaliConfigurationDriver::new(driver));
     let id_ctxt = Arc::new(id_ctxt);
     let cmd_log = CmdLog::new();
-
+    
+    if let Err(e) = driver.start_configuration().await {
+	error!("Failed to start configuration driver: {e}");
+        return ExitCode::FAILURE;
+    }
+    
     let (cmd_req_tx, cmd_req_rx) = mpsc::channel(10);
     let cmd_join = tokio::spawn(cmd_thread(
         driver.clone(),
@@ -781,6 +777,11 @@ async fn main() -> ExitCode {
             }
         }
     }
+    if let Err(e) = driver.end_configuration().await {
+	error!("Failed to stop configuration driver: {e}");
+        return ExitCode::FAILURE;
+    }
+    
     cmd_join.await.unwrap();
     debug!("main done");
     ExitCode::SUCCESS

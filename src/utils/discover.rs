@@ -23,7 +23,6 @@ enum SearchResult<E> {
     NoneFound,
     Found(u32),
     Conflict(u32),
-    ReplyError,
     DriverError(E),
 }
 
@@ -218,10 +217,6 @@ where
                 })
                 .await;
                 low = addr + 1;
-                high = TOP_SEARCH_ADDR;
-            }
-            SearchResult::ReplyError => {
-                low = 0;
                 high = TOP_SEARCH_ADDR;
             }
             SearchResult::DriverError(e) => break Err(e),

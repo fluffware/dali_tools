@@ -22,10 +22,10 @@ let max_index = 0;
 const MASK=255;
 
 const NO_COMMAND = 0;
-const SCAN_ADDRESS = 1;
+const SCAN_INDEX = 1;
 const FIND_ALL = 2;
-const NEW_ADDRESS = 3;
-const CHANGE_ADDRESSES = 4;
+const NEW_CONFIGURATION = 3;
+const COMMIT_CHANGES = 4;
 const SORT = 5;
 
 let executing = {}
@@ -94,21 +94,21 @@ function step(dir) {
 	    index--;
 	}
     }
-    send_cmd(SCAN_ADDRESS, {index: index})
+    send_cmd(SCAN_INDEX, {index: index})
     index_elem.innerText = (index+1).toString();
 }
 
 function handle_reply(reply)
 {
-    address = reply.current_address;
+    gear_id = reply.gear_id;
+    gear_label = reply.gear_id_label;
     max_index = reply.length - 1;
     index = reply.index;
     index_elem.innerText = index + 1
-    address_elem.innerText = address + 1;
+    address_elem.innerText = gear_label;
     max_index_elem.innerText = max_index + 1;
-    new_address_elem.innerText = 
-	reply.new_address == MASK 
-	? "-":(reply.new_address+1);
+    new_address_elem.innerText = reply.new_conf_label;
+
 }
 
 

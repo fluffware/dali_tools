@@ -15,9 +15,8 @@ index_elem = null;
 max_index_elem = null;
 wait_elem = null;
 
-let address = 0;
-let index = 0;
-let max_index = 0;
+let gear_index = 0;
+let max_gear_index = 0;
 
 const MASK=255;
 
@@ -86,27 +85,27 @@ function request_scan_state(cmd, args = {}) {
 function step(dir) {
 //    tick.play();
     if (dir > 0) {
-	if (index < max_index) {
-	    index++;
+	if (gear_index < max_gear_index) {
+	    gear_index++;
 	}
     } else {
-	if (index > 0) {
-	    index--;
+	if (gear_index > 0) {
+	    gear_index--;
 	}
     }
-    send_cmd(SCAN_INDEX, {index: index})
-    index_elem.innerText = (index+1).toString();
+    send_cmd(SCAN_INDEX, {index: gear_index})
+    index_elem.innerText = (gear_index+1).toString();
 }
 
 function handle_reply(reply)
 {
     gear_id = reply.gear_id;
     gear_label = reply.gear_id_label;
-    max_index = reply.length - 1;
-    index = reply.index;
-    index_elem.innerText = index + 1
+    max_gear_index = reply.length - 1;
+    gear_index = reply.index;
+    index_elem.innerText = gear_index + 1
     address_elem.innerText = gear_label;
-    max_index_elem.innerText = max_index + 1;
+    max_index_elem.innerText = max_gear_index + 1;
     new_address_elem.innerText = reply.new_conf_label;
 
 }
@@ -313,12 +312,12 @@ class IndexSwipeListener extends SwipeListener {
 	    ctx.textAlign = "left"
 	    ctx.textBaseline = "middle"
 	    ctx.font = step_size/2 + "px sans"
-	    if (index < max_index) {
-		ctx.fillText(index + 2, 10,this.step_y - 0.5 * step_size)
+	    if (gear_index < max_gear_index) {
+		ctx.fillText(gear_index + 2, 10,this.step_y - 0.5 * step_size)
 	    }
-	    ctx.fillText(index +1, 10,this.step_y + 0.5 * step_size)
-	    if (index > 0) {
-		ctx.fillText(index, 10,this.step_y + 1.5 * step_size)
+	    ctx.fillText(gear_index +1, 10,this.step_y + 0.5 * step_size)
+	    if (gear_index > 0) {
+		ctx.fillText(gear_index, 10,this.step_y + 1.5 * step_size)
 	    }
 	} else if (this.swipe_mode == SWIPE_HORIZ) {
 	    if (x < this.step_x) {
@@ -388,21 +387,22 @@ class AddressSwipeListener extends SwipeListener {
    
     move_swipe(x,y) {
 	console.log(`Move: ${y}`)
+	if (conf_info.length == 0) return
 	let ctx = this.ctxt;
 	let step_size = this.step_size()
-	let addr =parseInt( address_entry_elem.value);
+	let index =conf_entry_elem.selectedIndex;
 	if (y < this.step_y) {
 	    this.step_y -= step_size * HYSTERESIS;
-	    if (addr < 64) {
-		addr++
+	    if (index < conf_info.length - 1) {
+		index++
 	    }
 	} else if (y >= this.step_y + step_size) {
 	    this.step_y += step_size * HYSTERESIS;
-	    if (addr > 1) {
-		addr--
+	    if (index > 0) {
+		index--
 	    }
 	}
-	address_entry_elem.value = addr
+	conf_entry_elem.selectedIndex = index
 	ctx.clearRect(0,0,this.swipe.width,this.swipe.height);
 	ctx.beginPath();
 	ctx.moveTo(0,this.step_y);
@@ -413,12 +413,17 @@ class AddressSwipeListener extends SwipeListener {
 	ctx.textAlign = "left"
 	ctx.textBaseline = "middle"
 	ctx.font = step_size/2 + "px sans"
-	if (addr <= 64) {
-	    ctx.fillText(addr + 1, 10,this.step_y - 0.5 * step_size)
+	index = conf_entry_elem.selectedIndex;
+	console.log(`Index: ${index}`)
+	let next_conf = conf_info[index + 1];
+	if (next_conf != null) {
+	    ctx.fillText(next_conf.conf_label, 10,this.step_y - 0.5 * step_size)
 	}
-	ctx.fillText(addr, 10,this.step_y + 0.5 * step_size)
-	if (addr >= 1) {
-	    ctx.fillText(addr-1, 10,this.step_y + 1.5 * step_size)
+	
+	ctx.fillText(conf_info[index].conf_label, 10,this.step_y + 0.5 * step_size)
+	let prev_conf = conf_info[index - 1];
+	if (prev_conf != null) {
+	    ctx.fillText(prev_conf.conf_label, 10,this.step_y + 1.5 * step_size)
 	}
     }
     
@@ -426,14 +431,15 @@ class AddressSwipeListener extends SwipeListener {
 }
 
 function do_set_address() {
-    let new_addr = parseInt(address_entry_elem.value) - 1;
-    if (new_addr!=null) {
-	send_cmd(NEW_ADDRESS, {address: new_addr, index: index})
-	new_addr++;
-	if (new_addr >= 64) {
-	    address_entry_elem.value = 1;
+    let conf_index = conf_entry_elem.selectedIndex;
+    if (conf_index!=null) {
+	let conf_id = conf_info[conf_index]
+	send_cmd(NEW_CONF, {id: conf_index, index: gear_index})
+	conf_index++;
+	if (conf_index >= conf_entry_elem.length) {
+	    conf_entry_elem.selectedIndex = 0;
 	} else {
-	    address_entry_elem.value = new_addr + 1;
+	    conf_entry_elem.selectedIndex = conf_index + 1;
 	}
     }
 }
@@ -452,6 +458,33 @@ function resize_canvas(canvas)
     resize.observe(part);
 }
 
+let conf_entry_elem = null
+let conf_info = []
+
+function get_configuration(conf_index) {
+    let url = "/dyn/configuration?"+conf_index
+    fetch(url)
+	.then(response => {
+	    if (response.status == 200) {
+		response.json().then(data => {
+		    console.log(data)
+		    let opt_elem = document.createElement("option")
+		    opt_elem.innerText = data.conf_label
+		    opt_elem.setAttribute("value", conf_index);
+		    conf_info[conf_index] = data
+		    conf_entry_elem.append(opt_elem)			   
+		    conf_index++
+		    if (data.length > conf_index) {
+			setTimeout(() => get_configuration(conf_index), 100);
+			
+		    }
+		})
+	    } else {
+		console.log("GET request failed: Status "+response.status)
+	    }
+	})
+}
+
 function startup()
 {
     body = document.body;
@@ -462,7 +495,7 @@ function startup()
     new_address_elem = document.getElementById("new_address");
     index_elem = document.getElementById("index");
     max_index_elem = document.getElementById("max_index");
-    address_entry_elem = document.getElementById("address_entry");
+    conf_entry_elem = document.getElementById("conf_entry");
     wait_elem = document.getElementById("wait");
     
     resize_canvas(swipe)
@@ -502,12 +535,22 @@ function startup()
 	    step(1)
 	    break
 	case "ArrowUp":
-	    e.preventDefault();
-	    address_entry_elem.stepUp()
+	    {
+		e.preventDefault();
+		let index =  conf_entry_elem.selectedIndex
+		if (index < conf_entry_elem.length - 1) {
+		    conf_entry_elem.selectedIndex = index + 1
+		}
+	    }
 	    break
 	case "ArrowDown":
-	    e.preventDefault();
-	    address_entry_elem.stepDown()
+	    {
+		e.preventDefault();
+		let index =  conf_entry_elem.selectedIndex
+		if (index > 0) {
+		    conf_entry_elem.selectedIndex = index - 1
+		}
+	    }
 	    break
 	case "Enter":
 	case "Space":
@@ -526,5 +569,10 @@ function startup()
 	request_scan_state()
     }, 1000)
     send_cmd(FIND_ALL)
+
+    conf_entry_elem.replaceChildren()
+    conf_info = []
+    get_configuration(0)
+  
    
 }

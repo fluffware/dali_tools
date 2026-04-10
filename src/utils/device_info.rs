@@ -399,18 +399,21 @@ impl fmt::Display for Instance {
                     .unwrap_or(&"Unknown"),
             )?;
             while let Some(feature) = fi.next() {
-                write!(f,
+                write!(
+                    f,
                     ", {}",
-                    FEATURE_TYPE_NAMES.get(*feature as usize).unwrap_or(&"Unknown"),
+                    FEATURE_TYPE_NAMES
+                        .get(*feature as usize)
+                        .unwrap_or(&"Unknown"),
                 )?;
             }
             writeln!(f)?;
         }
 
         if let Some(resolution) = self.resolution {
-            writeln!(f,"Resolution: {resolution}")?;
+            writeln!(f, "Resolution: {resolution}")?;
         }
-	Ok(())
+        Ok(())
     }
 }
 

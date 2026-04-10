@@ -37,6 +37,7 @@ hyper-staticfile = {version = "*", optional=true}
 form_urlencoded = {version = "1.0", optional=true}
 bytes={version="*", optional=true}
 rust-embed={version="6.7.0", features=["include-exclude"], optional=true}
+yaml_serde = "0.10.4"
 
 [[bin]]
 name = "helvar_dump"

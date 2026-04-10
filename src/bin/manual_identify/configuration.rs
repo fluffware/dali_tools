@@ -2,7 +2,7 @@ use std::num::NonZeroU16;
 use std::pin::Pin;
 
 pub type DynResultFuture<T> =
-    Pin<Box<dyn Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> +Send>>;
+    Pin<Box<dyn Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send>>;
 
 #[derive(Clone, Debug)]
 pub struct GearConfiguration {

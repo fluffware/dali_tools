@@ -577,15 +577,17 @@ impl Decoder16 for Dt8Decoder {
                     state.dtr[0], state.dtr[1], state.dtr[2]
                 ),
                 0xed => {
-                    format!("Set temporary RGBWAF control (R: {}, G: {}, B: {}, W: {}, A: {}, F: {}, Type: {})",
-			   linked_status(state.dtr[0], 0x01),
-			   linked_status(state.dtr[0], 0x02),
-			   linked_status(state.dtr[0], 0x04),
-			   linked_status(state.dtr[0], 0x08),
-			   linked_status(state.dtr[0], 0x10),
-			   linked_status(state.dtr[0], 0x20),
-			   ["Channel", "Colour", "Normalized colour", "Reserved"][(state.dtr[0] >>6) as usize],
-			   )
+                    format!(
+                        "Set temporary RGBWAF control (R: {}, G: {}, B: {}, W: {}, A: {}, F: {}, Type: {})",
+                        linked_status(state.dtr[0], 0x01),
+                        linked_status(state.dtr[0], 0x02),
+                        linked_status(state.dtr[0], 0x04),
+                        linked_status(state.dtr[0], 0x08),
+                        linked_status(state.dtr[0], 0x10),
+                        linked_status(state.dtr[0], 0x20),
+                        ["Channel", "Colour", "Normalized colour", "Reserved"]
+                            [(state.dtr[0] >> 6) as usize],
+                    )
                 }
                 0xee => "Copy report to temporary".to_string(),
 

@@ -5,9 +5,11 @@ use std::net::IpAddr;
 use std::ops::RangeBounds;
 use std::pin::Pin;
 use std::process::ExitCode;
+use std::str::FromStr;
 use std::sync::atomic::{self, AtomicU16};
 use std::sync::{Arc, Mutex as BlockingMutex, RwLock};
 use std::task::{Context, Poll};
+use std::path::PathBuf;use std::fs::File;
 
 use clap::Parser;
 use futures::future::{Fuse, FutureExt};
@@ -134,8 +136,8 @@ fn reply_scan_update(ctxt: &IdentificationCtxt) -> String {
         let length = gears.len();
         let gear_id;
         let new_conf;
-        let gear_id_label : String;
-        let new_conf_label : String;
+        let gear_id_label: String;
+        let new_conf_label: String;
         if index < length
             && let Some(GearData {
                 id, conf, label, ..
@@ -173,6 +175,26 @@ fn reply_scan_update(ctxt: &IdentificationCtxt) -> String {
         .unwrap()
     })
 }
+
+fn reply_configuration(ctxt: &IdentificationCtxt, index: u16) -> DynResult<String> {
+    let (conf_info, length) = ctxt.get_state(|state| {
+        (
+            state.configurations.get(index as usize).cloned(),
+            state.configurations.len(),
+        )
+    });
+    let Some(conf_info) = conf_info else {
+        return Err("Configuration index out of bounds".into());
+    };
+    serde_json::to_string(&ConfigurationInfoUpdate {
+        conf_id: conf_info.id,
+        conf_label: conf_info.label,
+        index: index as u16,
+        length: length as u16,
+    })
+    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+}
+
 async fn clear_scan(
     driver: &SyncConfigurationDriver,
     ctxt: &Arc<IdentificationCtxt>,
@@ -221,10 +243,10 @@ async fn handle_commands(
                 }))
                 .await?;
             clear_scan(driver, ctxt).await?;
-	    let configurations = driver.configurations();
-	    ctxt.modify_state(|s| {
-		s.configurations = configurations;
-	    });
+            let configurations = driver.configurations();
+            ctxt.modify_state(|s| {
+                s.configurations = configurations;
+            });
             *current_high = true;
         }
         /*
@@ -496,6 +518,22 @@ fn decode_get_request(
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(reply_scan_update(ctxt)))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    } else if req.uri().path() == "/dyn/configuration" {
+        if let Ok(index) = u16::from_str(req.uri().query().unwrap_or(""))
+            && let Ok(reply) = reply_configuration(ctxt, index)
+        {
+            Response::builder()
+                .status(http::StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(reply))
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+             Response::builder()
+                .status(http::StatusCode::BAD_REQUEST)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body(Body::from("Invalid configuration index"))
+		.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        }
     } else {
         Response::builder()
             .status(http::StatusCode::NOT_FOUND)
@@ -584,6 +622,14 @@ struct ScanUpdate {
     gear_id_label: String,
     new_conf: ConfigurationState,
     new_conf_label: String,
+    index: u16,
+    length: u16,
+}
+
+#[derive(Serialize, Debug)]
+struct ConfigurationInfoUpdate {
+    conf_id: ConfigurationId,
+    conf_label: String,
     index: u16,
     length: u16,
 }
@@ -714,6 +760,9 @@ struct CmdArgs {
     /// HTTP port
     #[arg(long, default_value_t = 0)]
     http_port: u16,
+
+    #[arg(long,short='c')]
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -740,15 +789,29 @@ async fn main() -> ExitCode {
         }
     };
     let driver = Arc::new(Mutex::new(driver));
-    let driver = Arc::new(DaliConfigurationDriver::new(driver));
+    let mut driver = DaliConfigurationDriver::new(driver);
+    if let Some(filename) = args.config {
+	let conf_file = match File::open(&filename) {
+	    Ok(f) => f,
+	    Err(e) => {
+		error!("Failed to open {}: {}", filename.to_string_lossy(), e);
+		return ExitCode::FAILURE;
+	    }
+	};
+	if let Err(e) = driver.read_config(conf_file) {
+	    error!("Failed to openread {}: {}", filename.to_string_lossy(), e);
+	    return ExitCode::FAILURE;
+	}
+    }
+    let driver = Arc::new(driver);
     let id_ctxt = Arc::new(id_ctxt);
     let cmd_log = CmdLog::new();
-    
+
     if let Err(e) = driver.start_configuration().await {
-	error!("Failed to start configuration driver: {e}");
+        error!("Failed to start configuration driver: {e}");
         return ExitCode::FAILURE;
     }
-    
+
     let (cmd_req_tx, cmd_req_rx) = mpsc::channel(10);
     let cmd_join = tokio::spawn(cmd_thread(
         driver.clone(),
@@ -778,10 +841,10 @@ async fn main() -> ExitCode {
         }
     }
     if let Err(e) = driver.end_configuration().await {
-	error!("Failed to stop configuration driver: {e}");
+        error!("Failed to stop configuration driver: {e}");
         return ExitCode::FAILURE;
     }
-    
+
     cmd_join.await.unwrap();
     debug!("main done");
     ExitCode::SUCCESS

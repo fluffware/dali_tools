@@ -10,7 +10,7 @@ let swipe_mode = SWIPE_NONE;
 let tick;
 let interval = null;
 let tps_current = 0;
-address_elem = null;
+gear_label_elem = null;
 index_elem = null;
 max_index_elem = null;
 wait_elem = null;
@@ -74,7 +74,7 @@ function request_scan_state(cmd, args = {}) {
 	    if (response.status == 200) {
 		response.json().then(data => {
 		    console.log(data)
-		    handle_reply(data)
+		    handle_scan_reply(data)
 		})
 	    } else {
 		console.log("Scan state request failed: Status "+response.status)
@@ -97,16 +97,16 @@ function step(dir) {
     index_elem.innerText = (gear_index+1).toString();
 }
 
-function handle_reply(reply)
+function handle_scan_reply(reply)
 {
     gear_id = reply.gear_id;
     gear_label = reply.gear_id_label;
     max_gear_index = reply.length - 1;
     gear_index = reply.index;
     index_elem.innerText = gear_index + 1
-    address_elem.innerText = gear_label;
+    gear_label_elem.innerText = gear_label;
     max_index_elem.innerText = max_gear_index + 1;
-    new_address_elem.innerText = reply.new_conf_label;
+    new_conf_elem.innerText = reply.new_conf_label;
 
 }
 
@@ -257,7 +257,7 @@ class IndexSwipeListener extends SwipeListener {
 		if (this.double_tap_timer) {
 		    clearTimeout(this.double_tap_timer)
 		    this.double_tap_timer = null
-		    do_set_address()
+		    do_set_conf()
 		} else {
 		    let listener = this
 		    this.double_tap_timer = setTimeout(function() {
@@ -430,16 +430,17 @@ class AddressSwipeListener extends SwipeListener {
     
 }
 
-function do_set_address() {
+function do_set_conf() {
     let conf_index = conf_entry_elem.selectedIndex;
     if (conf_index!=null) {
-	let conf_id = conf_info[conf_index]
-	send_cmd(NEW_CONF, {id: conf_index, index: gear_index})
+	let conf_id = conf_info[conf_index].conf_id
+	console.log(conf_id)
+	send_cmd(NEW_CONFIGURATION, {id: conf_id, index: gear_index})
 	conf_index++;
 	if (conf_index >= conf_entry_elem.length) {
 	    conf_entry_elem.selectedIndex = 0;
 	} else {
-	    conf_entry_elem.selectedIndex = conf_index + 1;
+	    conf_entry_elem.selectedIndex = conf_index;
 	}
     }
 }
@@ -491,8 +492,8 @@ function startup()
     tick = document.getElementById("tick");
     swipe = document.getElementById("swipe");
     addr_swipe = document.getElementById("addr_swipe");
-    address_elem = document.getElementById("address");
-    new_address_elem = document.getElementById("new_address");
+    gear_label_elem = document.getElementById("gear_label");
+    new_conf_elem = document.getElementById("new_conf");
     index_elem = document.getElementById("index");
     max_index_elem = document.getElementById("max_index");
     conf_entry_elem = document.getElementById("conf_entry");
@@ -507,14 +508,14 @@ function startup()
 	send_cmd(FIND_ALL)
     });
 
-    let set_address = document.getElementById("set_address");
-    set_address.addEventListener("click", function() {
-	do_set_address()
+    let set_conf = document.getElementById("set_conf");
+    set_conf.addEventListener("click", function() {
+	do_set_conf()
     });
 
-    let change_addresses = document.getElementById("change_addresses");
-    change_addresses.addEventListener("click", function() {
-	send_cmd(CHANGE_ADDRESSES)
+    let commit_changes = document.getElementById("commit_changes");
+    commit_changes.addEventListener("click", function() {
+	send_cmd(COMMIT_CHANGES)
     });
     
     let sort = document.getElementById("sort");
@@ -555,7 +556,7 @@ function startup()
 	case "Enter":
 	case "Space":
 	    e.preventDefault();
-	    do_set_address();
+	    do_set_conf();
 	    break
 	}
 	console.log("Keydown"+e.code);

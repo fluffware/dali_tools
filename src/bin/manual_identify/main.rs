@@ -1,15 +1,16 @@
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::fs::File;
 use std::future::{self};
 use std::net::IpAddr;
 use std::ops::RangeBounds;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::atomic::{self, AtomicU16};
 use std::sync::{Arc, Mutex as BlockingMutex, RwLock};
 use std::task::{Context, Poll};
-use std::path::PathBuf;use std::fs::File;
 
 use clap::Parser;
 use futures::future::{Fuse, FutureExt};
@@ -73,8 +74,9 @@ struct GearData {
 }
 
 struct GearState {
-    current_gear: usize, // Index of currently selected gear
-    target_gear: usize,  // Index of gear to move selection to
+    current_gear: usize,           // Index of currently selected gear
+    target_gear: usize,            // Index of gear to move selection to
+    lowest_configured_gear: usize, // All gears at this index and up is configured
     gears: Vec<GearData>,
     configurations: Vec<ConfigurationInfo>,
 }
@@ -120,6 +122,7 @@ impl Default for IdentificationCtxt {
         let state = GearState {
             current_gear: 0,
             target_gear: 0,
+            lowest_configured_gear: 0,
             gears: Vec::new(),
             configurations: Vec::new(),
         };
@@ -207,6 +210,35 @@ async fn clear_scan(
     Ok(())
 }
 
+async fn swap_gears(
+    driver: &SyncConfigurationDriver,
+    ctxt: &Arc<IdentificationCtxt>,
+    gear_index1: usize,
+    gear_index2: usize,
+) -> DynResult<()> {
+    let (current_gear, id1, id2) = ctxt.modify_state(|s| {
+        (s.gears[gear_index1], s.gears[gear_index2]) =
+            (s.gears[gear_index2].clone(), s.gears[gear_index1].clone());
+        (
+            s.current_gear,
+            s.gears[gear_index1].id.clone(),
+            s.gears[gear_index2].id.clone(),
+        )
+    });
+    if gear_index1 > current_gear {
+        driver.set_low(id1).await?;
+    } else {
+        driver.set_high(id1).await?;
+    }
+    if gear_index2 > current_gear {
+        driver.set_low(id2).await?;
+    } else {
+        driver.set_high(id2).await?;
+    }
+
+    Ok(())
+}
+
 async fn handle_commands(
     driver: &SyncConfigurationDriver,
     ctxt: &Arc<IdentificationCtxt>,
@@ -239,6 +271,7 @@ async fn handle_commands(
                     };
                     cb_ctxt.modify_state(|s| {
                         s.gears.push(gd);
+                        s.lowest_configured_gear = s.gears.len();
                     })
                 }))
                 .await?;
@@ -255,13 +288,32 @@ async fn handle_commands(
         }
         */
         DaliCommands::NewConfiguration { index, conf_id } => {
-            ctxt.modify_state(|state| {
+            let (id_high, id_low) = ctxt.modify_state(|state| {
                 let gears = &mut state.gears;
-                if let Some(gear) = gears.get_mut(usize::from(index)).as_mut() {
+                let index = usize::from(index);
+                if index < gears.len() {
                     debug!("new_conf = {:?}", conf_id);
-                    gear.conf = ConfigurationState::NewConf(conf_id);
+                    gears[index].conf = ConfigurationState::NewConf(conf_id);
+                    if index + 1 < state.lowest_configured_gear {
+                        let replaced = gears[state.lowest_configured_gear - 1].clone();
+                        state.lowest_configured_gear -= 1;
+                        gears[state.lowest_configured_gear] = gears[index].clone();
+                        gears[index] = replaced.clone();
+                        state.target_gear = state.lowest_configured_gear - 1;
+                        return (
+                            Some(replaced.id),
+                            Some(gears[state.lowest_configured_gear].id.clone()),
+                        );
+                    }
                 }
+                (None, None)
             });
+	    if let Some(id) = id_low {
+		driver.set_low(id).await?;
+	    }
+	    if let Some(id) = id_high {
+		driver.set_high(id).await?;
+	    }
         }
         DaliCommands::CommitChanges => {
             let gears = ctxt.get_state(|state| state.gears.clone());
@@ -450,7 +502,7 @@ fn decode_get_request(
             DaliCommands::FIND_ALL => DaliCommands::FindAll,
             DaliCommands::NEW_CONFIGURATION => {
                 let conf_id =
-                    ConfigurationId::try_from(get_int_arg(&args, "address", 1..)? as u16).unwrap();
+                    ConfigurationId::try_from(get_int_arg(&args, "id", 1..)? as u16).unwrap();
                 let index = get_int_arg(&args, "index", 0..)? as u16;
                 DaliCommands::NewConfiguration { conf_id, index }
             }
@@ -528,11 +580,11 @@ fn decode_get_request(
                 .body(Body::from(reply))
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         } else {
-             Response::builder()
+            Response::builder()
                 .status(http::StatusCode::BAD_REQUEST)
                 .header(header::CONTENT_TYPE, "text/plain")
                 .body(Body::from("Invalid configuration index"))
-		.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         }
     } else {
         Response::builder()
@@ -761,7 +813,7 @@ struct CmdArgs {
     #[arg(long, default_value_t = 0)]
     http_port: u16,
 
-    #[arg(long,short='c')]
+    #[arg(long, short = 'c')]
     config: Option<PathBuf>,
 }
 
@@ -791,17 +843,17 @@ async fn main() -> ExitCode {
     let driver = Arc::new(Mutex::new(driver));
     let mut driver = DaliConfigurationDriver::new(driver);
     if let Some(filename) = args.config {
-	let conf_file = match File::open(&filename) {
-	    Ok(f) => f,
-	    Err(e) => {
-		error!("Failed to open {}: {}", filename.to_string_lossy(), e);
-		return ExitCode::FAILURE;
-	    }
-	};
-	if let Err(e) = driver.read_config(conf_file) {
-	    error!("Failed to openread {}: {}", filename.to_string_lossy(), e);
-	    return ExitCode::FAILURE;
-	}
+        let conf_file = match File::open(&filename) {
+            Ok(f) => f,
+            Err(e) => {
+                error!("Failed to open {}: {}", filename.to_string_lossy(), e);
+                return ExitCode::FAILURE;
+            }
+        };
+        if let Err(e) = driver.read_config(conf_file) {
+            error!("Failed to openread {}: {}", filename.to_string_lossy(), e);
+            return ExitCode::FAILURE;
+        }
     }
     let driver = Arc::new(driver);
     let id_ctxt = Arc::new(id_ctxt);

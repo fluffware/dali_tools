@@ -14,6 +14,8 @@ use dali::utils::address_assignment::program_short_addresses;
 use dali_tools as dali;
 use dali_tools::common::driver_commands::DriverCommands;
 use log::debug;
+use serde::de::MapAccess;
+use serde::de::Visitor;
 use serde::de::{Deserialize, Deserializer};
 use serde_derive::Deserialize;
 use std::future;
@@ -43,10 +45,14 @@ impl From<yaml_serde::Error> for Error {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct DaliGearConfiguration {
+    #[serde(skip)]
     label: String,
-    addr: u8,
+    address: u8,
+    group: Option<u8>,
+    fade_time: Option<u8>,
+    fade_rate: Option<u8>,
 }
 
 struct GearConfVisitor {}
@@ -58,31 +64,40 @@ impl GearConfVisitor {
 }
 impl<'de> Visitor<'de> for GearConfVisitor {
     type Value = VecDaliGearConfiguration;
-    
+
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(formatter, "a gear configuration", self.min)
+        write!(formatter, "a gear configuration")
     }
-    
-    fn visit_map<A>(self, map: M) -> Result<Self::Value, A::Error> where M: MapAccess<'de> {
-	let conf = new DaliGearConfiguration();
-	conf.deserialize();
-    }    
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut conf = Vec::new();
+        while let Some((key, mut value)) = map.next_entry::<String, DaliGearConfiguration>()? {
+            value.label = key;
+            conf.push(value);
+        }
+        debug!("{:?}", conf);
+        Ok(VecDaliGearConfiguration(conf))
+    }
 }
 
 struct VecDaliGearConfiguration(Vec<DaliGearConfiguration>);
 
 impl<'de> Deserialize<'de> for VecDaliGearConfiguration {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
     {
-	let vec = new Vec<DaliGearConfiguration>();
-	vec.deserialize(deserializer);
-	deserializer.deserialize_map(GearConfVisitor::new())
+        let visitor = GearConfVisitor::new();
+        deserializer.deserialize_map(visitor)
     }
 }
 
 #[derive(Deserialize)]
 struct ConfigFile {
-    dali: Vec<DaliGearConfiguration>,
+    dali: VecDaliGearConfiguration,
 }
 
 pub struct DaliConfigurationDriver {
@@ -107,15 +122,7 @@ impl DaliConfigurationDriver {
         Short::new(a as u8)
     }*/
 
-    fn get_conf_label(&self, conf: ConfigurationId) -> String {
-        let a: u16 = conf.into();
-        if a >= 1 && a <= 64 {
-            format!("({})", a)
-        } else {
-            "-".to_string()
-        }
-    }
-
+  
     pub fn read_config<R: Read>(&mut self, reader: R) -> Result<(), Error> {
         self.conf_file = Some(yaml_serde::from_reader(reader)?);
         Ok(())
@@ -206,13 +213,27 @@ impl ConfigurationDriver for DaliConfigurationDriver {
     }
     fn configurations(&self) -> Vec<ConfigurationInfo> {
         let mut confs = Vec::new();
-        for conf in 1..=64 {
-            let id = ConfigurationId::try_from(conf).unwrap();
-            let info = ConfigurationInfo {
-                id: id.clone(),
-                label: self.get_conf_label(id),
-            };
-            confs.push(info);
+        if let Some(conf_file) = &self.conf_file {
+            for c in &conf_file.dali.0 {
+                confs.push(ConfigurationInfo {
+                    id: ConfigurationId::try_from(c.address as u16).unwrap(),
+                    label: format!("{} ({})",c.label, c.address),
+                });
+            }
+        } else {
+            for conf in 1..=64 {
+	        let id = ConfigurationId::try_from(conf).unwrap();
+		let info = ConfigurationInfo {
+                    id: id.clone(),
+                    label: 	if conf >= 1 && conf <= 64 {
+			format!("({})", conf)
+		    } else {
+			"-".to_string()
+		    }
+		};
+		confs.push(info);
+		
+            }
         }
         confs
     }

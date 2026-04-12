@@ -56,6 +56,6 @@ p {
      font-size: 50px;
 }
 
-#find_all, #set_address, #change_addresses, #sort {
+#find_all, #set_conf, #commit_changes, #sort {
     font-size: 50px;
 }

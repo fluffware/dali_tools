@@ -4,6 +4,7 @@ use crate::drivers::driver::{DaliDriver, DaliSendResult};
 use crate::drivers::driver_utils::DaliDriverExt;
 use crate::drivers::send_flags::NO_FLAG;
 use crate::gear::cmd_defs as cmd;
+use log::debug;
 use std::convert::TryInto;
 use std::error::Error;
 use std::fmt;
@@ -129,10 +130,17 @@ pub async fn read_range(
         .await
         .check_send()?;
     let mut data = Vec::new();
-    for _ in 0..length {
+    for offset in 0..length {
         match send16::query(d, cmd::READ_MEMORY_LOCATION(addr), NO_FLAG).await {
             DaliSendResult::Answer(d) => data.push(d),
-            DaliSendResult::Timeout => break,
+            DaliSendResult::Timeout => {
+                return Err(format!(
+                    "Address {} of bank {} is not implemented",
+                    start + offset,
+                    bank
+                )
+                .into());
+            }
             e => return Err(Box::new(e)),
         }
     }
@@ -142,9 +150,11 @@ pub async fn read_range(
         .check_answer()?;
     if length as usize == data.len() {
         if dtr != length + start {
+            debug!("A {} != {}", dtr, length + start);
             return Err(Box::new(MemoryError::LengthMismatch));
         }
     } else if dtr != data.len() as u8 + 1 + start {
+        debug!("B {} != {}", dtr, data.len() as u8 + 1 + start);
         return Err(Box::new(MemoryError::LengthMismatch));
     }
     Ok(data)

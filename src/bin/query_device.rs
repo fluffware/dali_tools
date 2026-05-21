@@ -58,7 +58,7 @@ async fn main() {
             Arg::new("try-all")
                 .long("try-all")
                 .action(clap::ArgAction::SetTrue)
-                .help("Try reading parameters even from devices that doesn't respond woth a long address"),
+                .help("Try reading parameters even from devices that doesn't respond with a long address"),
         )
         .get_matches();
 

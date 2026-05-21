@@ -4,7 +4,9 @@ use core::str::FromStr;
 
 /// Value used for display, normally 1 based
 pub trait DisplayValue {
+    /// Value displayed to a user
     fn display_value(&self) -> u8;
+    /// Create a new address object from a display value
     fn from_display_value<A>(value: A) -> Result<Self, AddressError>
     where
         A: TryInto<u8>,
@@ -32,11 +34,14 @@ impl std::fmt::Display for AddressError {
 
 impl std::error::Error for AddressError {}
 
+/// Short address of a DALI device
 #[derive(Debug, Copy, Clone)]
 pub struct Short(u8);
 
 impl Short {
     const DISPLAY_RANGE: RangeInclusive<u8> = 1..=64;
+
+    /// Create a new short address from a zero based value
     pub fn new(a: u8) -> Short {
         assert!(a < 64);
         Short(a)
@@ -55,6 +60,7 @@ impl Short {
         Ok(a - Self::DISPLAY_RANGE.start())
     }
 
+    /// Add an offset to an a short address
     pub fn try_add(&self, add: i8) -> Result<Short, AddressError> {
         let a = (self.0 as i8 + add) as u8;
         if a <= 64 {
@@ -69,18 +75,7 @@ impl Short {
         self.0
     }
 }
-/*
-impl std::convert::TryFrom<i32> for Short {
-type Error = AddressError;
-    fn try_from(a: i32) -> Result<Self, Self::Error> {
-        if a >= 1 && a <= 64 {
-            Ok(Self::new(a as u8))
-        } else {
-            Err(AddressError::NotShort)
-        }
-    }
-}
- */
+
 impl std::cmp::PartialEq<Short> for Short {
     fn eq(&self, other: &Short) -> bool {
         self.0 == other.0
@@ -156,6 +151,7 @@ impl FromStr for Short {
 
 pub type Long = u32;
 
+/// Group address of DALI devices
 #[derive(Debug, Copy, Clone)]
 pub struct GroupImpl<const MAX: u8>(u8);
 
@@ -179,19 +175,6 @@ impl<const MAX: u8> GroupImpl<MAX> {
         Ok(a - Self::DISPLAY_RANGE.start())
     }
 }
-
-/*
-impl<const MAX: u8> std::convert::TryFrom<i32> for GroupImpl<MAX> {
-    type Error = AddressError;
-    fn try_from(a: i32) -> Result<Self, Self::Error> {
-        if a >= 1 && a <= i32::from(MAX) {
-            Ok(Self::new(a as u8))
-        } else {
-            Err(AddressError::NotGroup)
-        }
-    }
-}
-*/
 
 impl<const MAX_GROUP: u8> std::convert::TryFrom<AddressImpl<MAX_GROUP>> for GroupImpl<MAX_GROUP> {
     type Error = AddressError;

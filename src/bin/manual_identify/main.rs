@@ -23,7 +23,7 @@ use serde::Serialize;
 use serde::Serializer;
 use serde_derive::Serialize;
 use tokio::sync::{Mutex, mpsc, oneshot};
-use tokio::time::Duration;
+use tokio::time::{Duration, Sleep};
 
 use dali::common::defs::MASK;
 use dali::drivers::driver::OpenError;
@@ -33,7 +33,7 @@ use dali_tools as dali;
 mod configuration;
 mod dali_ident;
 use configuration::{
-    ConfigurationDriver, ConfigurationId, ConfigurationInfo, GearConfiguration, GearId,
+    ConfigurationDriver, ConfigurationId, ConfigurationInfo, GearConfiguration, GearId, GearRemap,
 };
 use dali_ident::DaliConfigurationDriver;
 
@@ -74,9 +74,8 @@ struct GearData {
 }
 
 struct GearState {
-    current_gear: usize,           // Index of currently selected gear
-    target_gear: usize,            // Index of gear to move selection to
-    lowest_configured_gear: usize, // All gears at this index and up is configured
+    current_gear: usize, // Index of currently selected gear
+    target_gear: usize,  // Index of gear to move selection to
     gears: Vec<GearData>,
     configurations: Vec<ConfigurationInfo>,
 }
@@ -122,7 +121,6 @@ impl Default for IdentificationCtxt {
         let state = GearState {
             current_gear: 0,
             target_gear: 0,
-            lowest_configured_gear: 0,
             gears: Vec::new(),
             configurations: Vec::new(),
         };
@@ -210,6 +208,7 @@ async fn clear_scan(
     Ok(())
 }
 
+/*
 async fn swap_gears(
     driver: &SyncConfigurationDriver,
     ctxt: &Arc<IdentificationCtxt>,
@@ -238,6 +237,7 @@ async fn swap_gears(
 
     Ok(())
 }
+ */
 
 async fn handle_commands(
     driver: &SyncConfigurationDriver,
@@ -271,7 +271,6 @@ async fn handle_commands(
                     };
                     cb_ctxt.modify_state(|s| {
                         s.gears.push(gd);
-                        s.lowest_configured_gear = s.gears.len();
                     })
                 }))
                 .await?;
@@ -291,43 +290,46 @@ async fn handle_commands(
             let (id_high, id_low) = ctxt.modify_state(|state| {
                 let gears = &mut state.gears;
                 let index = usize::from(index);
-                if index < gears.len() {
-                    debug!("new_conf = {:?}", conf_id);
-                    gears[index].conf = ConfigurationState::NewConf(conf_id);
-                    if index + 1 < state.lowest_configured_gear {
-                        let replaced = gears[state.lowest_configured_gear - 1].clone();
-                        state.lowest_configured_gear -= 1;
-                        gears[state.lowest_configured_gear] = gears[index].clone();
-                        gears[index] = replaced.clone();
-                        state.target_gear = state.lowest_configured_gear - 1;
-                        return (
-                            Some(replaced.id),
-                            Some(gears[state.lowest_configured_gear].id.clone()),
-                        );
-                    }
-                }
-                (None, None)
+                gears[index].conf = ConfigurationState::NewConf(conf_id);
+                let id_low = gears[index].id.clone();
+                gears[index..].rotate_left(1);
+                let id_high = gears[index].id.clone();
+                (id_high, id_low)
             });
-	    if let Some(id) = id_low {
-		driver.set_low(id).await?;
-	    }
-	    if let Some(id) = id_high {
-		driver.set_high(id).await?;
-	    }
+            driver.set_low(id_low).await?;
+            driver.set_high(id_high).await?;
         }
         DaliCommands::CommitChanges => {
-            let gears = ctxt.get_state(|state| state.gears.clone());
-            let mut gear_conf = Vec::new();
-            for gear in gears {
-                match gear.conf {
-                    ConfigurationState::NewConf(conf) => {
-                        let id = gear.id;
-                        gear_conf.push(GearConfiguration { id, conf });
+            let gear_conf = ctxt.get_state(|state| {
+                let gears = &state.gears;
+                let mut gear_conf = Vec::new();
+                for gear in gears {
+                    match &gear.conf {
+                        ConfigurationState::NewConf(conf) => {
+                            gear_conf.push(GearConfiguration {
+                                id: gear.id.clone(),
+                                conf: conf.clone(),
+                            });
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-            driver.commit(gear_conf).await?;
+                gear_conf
+            });
+            let remap = driver.commit(gear_conf).await?;
+            ctxt.modify_state(|state| {
+                let gears = &mut state.gears;
+                for GearRemap { old, new } in remap {
+                    if let Some(gear) = gears.iter_mut().find(|g| g.id == old) {
+                        gear.id = new.id;
+                        gear.label = new.label;
+                        gear.conf = match new.conf {
+                            Some(conf) => ConfigurationState::CurrentConf(conf),
+                            None => ConfigurationState::Unconfigured,
+                        };
+                    }
+                }
+            });
         } /*
           DaliCommands::Sort => {
               ctxt.modify_state(|state| {
@@ -517,7 +519,7 @@ fn decode_get_request(
         }
          */
 
-        println!("Command: {:?}", cmd);
+        debug!("Command: {:?}", cmd);
         let (reply, rx) = oneshot::channel();
         if let Err(err) = cmd_req.try_send(DaliCommandRequest {
             cmd: cmd.clone(),
@@ -691,104 +693,151 @@ struct DaliCommandRequest {
     pub reply: oneshot::Sender<DaliCommandStatus>,
 }
 
-async fn cmd_thread(
+struct CmdThread {
     driver: SyncConfigurationDriver,
     ctxt: Arc<IdentificationCtxt>,
-    mut cmd_req: mpsc::Receiver<DaliCommandRequest>,
+    cmd_req: mpsc::Receiver<DaliCommandRequest>,
     cmd_log: CmdLog,
-) {
-    let mut step_gear = false;
-    let mut current_high = false;
-    let start_blink = Fuse::terminated();
-    tokio::pin!(start_blink);
-    let tick_blink = Fuse::terminated();
-    tokio::pin!(tick_blink);
-    loop {
-        tokio::select! {
-            res = cmd_req.recv() => {
-                match res {
-                    Some(cmd) => {
-                        match handle_commands(&driver, &ctxt, cmd.cmd, &mut current_high).await {
-                            Err(e) => {
-                                error!("Command failed: {}", e);
-                                let _ = cmd.reply.send(DaliCommandStatus::Failed);
-                            }
-                            Ok(status) => {
-                                let _ = cmd.reply.send(status);
-                            }
+
+    step_gear: bool,
+    current_high: bool,
+}
+
+impl CmdThread {
+    pub fn new(
+        driver: SyncConfigurationDriver,
+        ctxt: Arc<IdentificationCtxt>,
+        cmd_req: mpsc::Receiver<DaliCommandRequest>,
+        cmd_log: CmdLog,
+    ) -> CmdThread {
+        let step_gear = false;
+        let current_high = false;
+
+        CmdThread {
+            driver,
+            ctxt,
+            cmd_req,
+            cmd_log,
+            step_gear,
+            current_high,
+        }
+    }
+
+    async fn do_tick_blink(&mut self, tick_blink: &mut Pin<&mut Fuse<Sleep>>) {
+        tick_blink.set(tokio::time::sleep(Duration::from_millis(300)).fuse());
+
+        let gear_id: Option<GearId> = self
+            .ctxt
+            .get_current_gear(|gear| gear.and_then(|g| Some(g.id.clone())));
+        if let Some(gear_id) = gear_id {
+            if self.current_high {
+                self.current_high = false;
+                if let Err(e) = self.driver.set_low(gear_id).await {
+                    error!("Failed to set low level while blinking: {e}");
+                }
+            } else {
+                self.current_high = true;
+                if let Err(e) = self.driver.set_high(gear_id).await {
+                    error!("Failed to set low level while blinking: {e}");
+                }
+            }
+        } else {
+            error!("Failed to blink");
+        }
+    }
+
+    async fn do_step_gear(
+        &mut self,
+        start_blink: &mut Pin<&mut Fuse<Sleep>>,
+        tick_blink: &mut Pin<&mut Fuse<Sleep>>,
+    ) {
+        start_blink.set(Fuse::terminated());
+        tick_blink.set(Fuse::terminated());
+
+        let (gear_low, gear_high) = self.ctxt.modify_state(|state| {
+            if state.current_gear < state.target_gear {
+                let gear_low = state.gears[state.current_gear as usize].id.clone();
+                state.current_gear += 1;
+                let gear_high = state.gears[state.current_gear as usize].id.clone();
+                (Some(gear_low), gear_high)
+            } else {
+                let gear_high = state.gears[state.current_gear as usize].id.clone();
+                state.current_gear -= 1;
+                (None, gear_high)
+            }
+        });
+        if let Some(gear_low) = gear_low {
+            // Stepping up
+            if !self.current_high {
+                if let Err(e) = self.driver.set_high(gear_low).await {
+                    error!("Failed to set high level: {}", e);
+                }
+            }
+            if let Err(e) = self.driver.set_high(gear_high).await {
+                error!("Failed to set high level: {}", e);
+            }
+            self.current_high = true;
+        } else {
+            // Stepping down
+            if self.current_high {
+                if let Err(e) = self.driver.set_low(gear_high).await {
+                    error!("Failed to set low level: {}", e);
+                }
+            }
+            self.current_high = true;
+        }
+        self.step_gear = self.ctxt.get_state(|s| s.current_gear != s.target_gear);
+
+        start_blink.set(tokio::time::sleep(Duration::from_millis(1000)).fuse());
+    }
+
+    async fn do_recv(&mut self, res: Option<DaliCommandRequest>) {
+        match res {
+            Some(cmd) => {
+                match handle_commands(&self.driver, &self.ctxt, cmd.cmd, &mut self.current_high)
+                    .await
+                {
+                    Err(e) => {
+                        error!("Command failed: {}", e);
+                        let _ = cmd.reply.send(DaliCommandStatus::Failed);
+                    }
+                    Ok(status) => {
+                        let _ = cmd.reply.send(status);
+                    }
+                }
+                self.step_gear = self
+                    .ctxt
+                    .modify_state(|state| state.current_gear != state.target_gear);
+            }
+            None => return,
+        }
+    }
+
+    pub async fn run(mut self) {
+        let start_blink: Fuse<Sleep> = Fuse::terminated();
+        tokio::pin!(start_blink);
+        let tick_blink: Fuse<Sleep> = Fuse::terminated();
+        tokio::pin!(tick_blink);
+        loop {
+            tokio::select! {
+                    res = self.cmd_req.recv() => {
+            self.do_recv(res).await;
                         }
-                        step_gear = ctxt.modify_state(|state| state.current_gear != state.target_gear);
-
+                    res = self.cmd_log.notify() =>
+                    {
+                            debug!("Reply for id {}", res);
                     }
-                    None => break
-                }
-            }
-            res = cmd_log.notify() =>
-            {
-                debug!("Reply for id {}", res);
-            }
-            _ = &mut start_blink => {
-                tick_blink.set(tokio::time::sleep(Duration::from_millis(500)).fuse());
-            }
-            _ = &mut tick_blink => {
-                tick_blink.set(tokio::time::sleep(Duration::from_millis(300)).fuse());
-
-                let gear_id: Option<GearId> = ctxt.get_current_gear(|gear| gear.and_then(|g| Some(g.id.clone())));
-                if let Some(gear_id) = gear_id  {
-                    if current_high {
-                        current_high = false;
-            if let Err(e) = driver.set_low(gear_id).await {
-                error!("Failed to set low level while blinking: {e}");
-            }
-                    } else {
-                        current_high = true;
-                        if let Err(e) = driver.set_high(gear_id).await {
-                error!("Failed to set low level while blinking: {e}");
-            }
+                    _ = &mut start_blink => {
+                        tick_blink.set(tokio::time::sleep(Duration::from_millis(500)).fuse());
                     }
-                } else {
-                    error!("Failed to blink");
-                }
-            }
-            _ = future::ready(()), if step_gear => {
-
-                start_blink.set(Fuse::terminated());
-                tick_blink.set(Fuse::terminated());
-
-                if current_high
-            && let Some(gear_id) = ctxt.get_current_gear(|gear| gear.and_then(|g| Some(g.id.clone()))) {
-            if let Err(e) =
-                driver.set_high(gear_id).await {
-                error!("Failed to set high level: {}",e);
-                }
-            current_high = true;
+                    _ = &mut tick_blink => {
+                        self.do_tick_blink(&mut tick_blink).await;
+                    }
+            _ = future::ready(()), if self.step_gear => {
+                        self.do_step_gear(&mut start_blink, &mut tick_blink).await;
             }
 
-                let (step_up,gear_id)  = ctxt.modify_state(|state| {
-                    if state.current_gear < state.target_gear {
-                        state.current_gear += 1;
-
-                        (true, state.gears.get(state.current_gear as usize).and_then(|g| Some(g.id.clone())))
-                    } else {
-                        state.current_gear -= 1;
-                        (false, state.gears.get(state.current_gear as usize +1).and_then(|g| Some(g.id.clone())))
-                    }});
-                if let Some(gear_id) = gear_id {
-                    if step_up {
-                        if let Err(e) =
-                            driver.set_high(gear_id).await {
-                error!("Failed to set high level: {}",e);
                 }
-            current_high = true;
-            } else if let Err(e) =
-            driver.set_low(gear_id).await {
-                error!("Failed to set high level: {}",e);
-            }
-                }
-                step_gear = ctxt.get_state(|s| s.current_gear != s.target_gear);
-
-                start_blink.set(tokio::time::sleep(Duration::from_millis(1000)).fuse());
-            }
         }
     }
 }
@@ -797,8 +846,8 @@ async fn cmd_thread(
 // Identify DALI gear
 struct CmdArgs {
     // Select DALI-device
-    #[arg(short = 'd', long, default_value = "default")]
-    device: String,
+    #[arg(short = 'd', long)]
+    device: Option<String>,
     // Low DALI level
     #[arg(long, default_value_t = MASK)]
     low: u8,
@@ -827,10 +876,14 @@ async fn main() -> ExitCode {
 
     debug!("Low: {} High: {}", args.low, args.high);
     let id_ctxt = IdentificationCtxt::new();
-    let driver = match dali::drivers::open(&args.device) {
+    let device = args
+        .device
+        .unwrap_or_else(|| std::env::var("DALI_DEVICE").unwrap_or_else(|_| "default".to_string()));
+
+    let driver = match dali::drivers::open(&device) {
         Ok(d) => d,
         Err(e) => {
-            error!("Failed to open DAIL device: {}", e);
+            error!("Failed to open DAIL device '{}': {}", device, e);
             if let OpenError::NotFound = e {
                 info!("Available drivers:");
                 for name in dali::drivers::driver_names() {
@@ -865,12 +918,8 @@ async fn main() -> ExitCode {
     }
 
     let (cmd_req_tx, cmd_req_rx) = mpsc::channel(10);
-    let cmd_join = tokio::spawn(cmd_thread(
-        driver.clone(),
-        id_ctxt.clone(),
-        cmd_req_rx,
-        cmd_log.clone(),
-    ));
+    let cmd_thread = CmdThread::new(driver.clone(), id_ctxt.clone(), cmd_req_rx, cmd_log.clone());
+    let cmd_join = tokio::spawn(cmd_thread.run());
     let mut conf = ServerConfig::new();
     if let Some(addr) = args.http_address {
         conf = conf.bind_addr(addr);

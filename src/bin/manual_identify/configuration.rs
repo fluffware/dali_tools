@@ -53,6 +53,12 @@ pub struct GearInfo {
     pub conf: Option<ConfigurationId>,
 }
 
+#[derive(Clone, Debug)]
+pub struct GearRemap {
+    pub old: GearId,
+    pub new: GearInfo,
+}
+
 pub trait ConfigurationDriver: Send + Sync {
     fn start_configuration(&self) -> DynResultFuture<()>;
     fn end_configuration(&self) -> DynResultFuture<()>;
@@ -63,5 +69,5 @@ pub trait ConfigurationDriver: Send + Sync {
     fn configurations(&self) -> Vec<ConfigurationInfo>;
 
     // Invalidates all gear ids
-    fn commit(&self, gears: Vec<GearConfiguration>) -> DynResultFuture<()>;
+    fn commit(&self, gears: Vec<GearConfiguration>) -> DynResultFuture<Vec<GearRemap>>;
 }

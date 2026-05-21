@@ -1,6 +1,6 @@
 use super::configuration::{
     ConfigurationDriver, ConfigurationId, ConfigurationInfo, DynResultFuture, GearConfiguration,
-    GearId, GearInfo,
+    GearId, GearInfo, GearRemap,
 };
 use dali::common::address::Short;
 use dali::common::defs::MASK;
@@ -10,6 +10,7 @@ use dali::drivers::send_flags::{NO_FLAG, PRIORITY_1};
 use dali::gear::address::Address;
 use dali::gear::cmd_defs as cmd;
 use dali::gear::commands_102::Commands102;
+//use dali::gear::fade::{FadeRate, FadeTime};
 use dali::utils::address_assignment::program_short_addresses;
 use dali_tools as dali;
 use dali_tools::common::driver_commands::DriverCommands;
@@ -27,6 +28,8 @@ use yaml_serde;
 #[derive(Debug)]
 pub enum Error {
     Yaml(yaml_serde::Error),
+    InvalidGearId,
+    InvalidConfigurartionId,
 }
 
 impl std::error::Error for Error {}
@@ -35,6 +38,8 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Yaml(e) => e.fmt(f),
+            Self::InvalidGearId => write!(f, "Invalid gear ID"),
+            Self::InvalidConfigurartionId => write!(f, "Invalid configuration ID"),
         }
     }
 }
@@ -44,15 +49,23 @@ impl From<yaml_serde::Error> for Error {
         Self::Yaml(err)
     }
 }
+fn deserialize_short_addr<'de, D>(deserializer: D) -> Result<Short, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let a = Deserialize::deserialize(deserializer)?;
+    Ok(Short::new(a))
+}
 
 #[derive(Deserialize, Debug)]
 struct DaliGearConfiguration {
     #[serde(skip)]
     label: String,
-    address: u8,
-    group: Option<u8>,
-    fade_time: Option<u8>,
-    fade_rate: Option<u8>,
+    #[serde(deserialize_with = "deserialize_short_addr")]
+    address: Short,
+    //group: Option<u8>,
+    //fade_time: Option<FadeTime>,
+    //fade_rate: Option<u8>,
 }
 
 struct GearConfVisitor {}
@@ -97,7 +110,7 @@ impl<'de> Deserialize<'de> for VecDaliGearConfiguration {
 
 #[derive(Deserialize)]
 struct ConfigFile {
-    dali: VecDaliGearConfiguration,
+    dali: VecDaliGearConfiguration, // (ConfigurationId - 1) indexes this vector
 }
 
 pub struct DaliConfigurationDriver {
@@ -122,10 +135,22 @@ impl DaliConfigurationDriver {
         Short::new(a as u8)
     }*/
 
-  
     pub fn read_config<R: Read>(&mut self, reader: R) -> Result<(), Error> {
         self.conf_file = Some(yaml_serde::from_reader(reader)?);
         Ok(())
+    }
+
+    fn get_conf(&self, id: &ConfigurationId) -> Result<&DaliGearConfiguration, Error> {
+        let index = (Into::<u16>::into(id.clone()) - 1) as usize;
+        if let Some(conf_file) = &self.conf_file {
+            if index >= conf_file.dali.0.len() {
+                debug!("Index {}", index);
+                return Err(Error::InvalidConfigurartionId);
+            }
+            Ok(&conf_file.dali.0[index])
+        } else {
+            Err(Error::InvalidConfigurartionId)
+        }
     }
 }
 
@@ -141,7 +166,11 @@ impl ConfigurationDriver for DaliConfigurationDriver {
         let low_level = self.low_level;
         Box::pin(async move {
             let driver = &mut **hw_driver.lock().await;
-            let addr = Address::Short(Short::new((Into::<u16>::into(id) - 1) as u8));
+            let addr = Into::<u16>::into(id) - 1;
+            if addr >= 64 {
+                return Err(Error::InvalidGearId.into());
+            }
+            let addr = Address::Short(Short::new(addr as u8));
             match if low_level == MASK {
                 send16::cmd(driver, cmd::RECALL_MIN_LEVEL(addr), NO_FLAG).await
             } else {
@@ -176,7 +205,11 @@ impl ConfigurationDriver for DaliConfigurationDriver {
         let high_level = self.high_level;
         Box::pin(async move {
             let driver = &mut **hw_driver.lock().await;
-            let addr = Address::Short(Short::new((Into::<u16>::into(id) - 1) as u8));
+            let addr = Into::<u16>::into(id) - 1;
+            if addr >= 64 {
+                return Err(Error::InvalidGearId.into());
+            }
+            let addr = Address::Short(Short::new(addr as u8));
             match if high_level == MASK {
                 send16::cmd(driver, cmd::RECALL_MAX_LEVEL(addr), NO_FLAG).await
             } else {
@@ -214,45 +247,58 @@ impl ConfigurationDriver for DaliConfigurationDriver {
     fn configurations(&self) -> Vec<ConfigurationInfo> {
         let mut confs = Vec::new();
         if let Some(conf_file) = &self.conf_file {
-            for c in &conf_file.dali.0 {
+            for (index, c) in conf_file.dali.0.iter().enumerate() {
                 confs.push(ConfigurationInfo {
-                    id: ConfigurationId::try_from(c.address as u16).unwrap(),
-                    label: format!("{} ({})",c.label, c.address),
+                    id: ConfigurationId::try_from(index as u16 + 1).unwrap(),
+                    label: format!("{} ({})", c.label, c.address.to_string()),
                 });
             }
         } else {
             for conf in 1..=64 {
-	        let id = ConfigurationId::try_from(conf).unwrap();
-		let info = ConfigurationInfo {
+                let id = ConfigurationId::try_from(conf).unwrap();
+                let info = ConfigurationInfo {
                     id: id.clone(),
-                    label: 	if conf >= 1 && conf <= 64 {
-			format!("({})", conf)
-		    } else {
-			"-".to_string()
-		    }
-		};
-		confs.push(info);
-		
+                    label: if conf >= 1 && conf <= 64 {
+                        format!("({})", conf)
+                    } else {
+                        "-".to_string()
+                    },
+                };
+                confs.push(info);
             }
         }
         confs
     }
 
     // Invalidates all gear ids
-    fn commit(&self, gears: Vec<GearConfiguration>) -> DynResultFuture<()> {
+    fn commit(&self, gears: Vec<GearConfiguration>) -> DynResultFuture<Vec<GearRemap>> {
+        let mut swaps = Vec::new();
+        let mut remap = Vec::new();
+        for g in gears.iter() {
+            let conf = match self.get_conf(&g.conf) {
+                Ok(c) => c,
+                Err(e) => return Box::pin(future::ready(Err(e.into()))),
+            };
+            swaps.push((
+                Short::new((Into::<u16>::into(g.id.clone()) - 1) as u8),
+                conf.address,
+            ));
+            remap.push(GearRemap {
+                old: g.id.clone(),
+                new: GearInfo {
+                    id: GearId::try_from(conf.address.value() as u16 + 1).unwrap(),
+                    label: conf.label.clone(),
+                    conf: Some(g.conf.clone()),
+                },
+            });
+        }
+
         let hw_driver = self.hw_driver.clone();
         Box::pin(async move {
             let driver = &mut **hw_driver.lock().await;
-            let mut swaps = Vec::new();
-            for g in gears.iter() {
-                swaps.push((
-                    Short::new((Into::<u16>::into(g.id.clone()) - 1) as u8),
-                    Short::new((Into::<u16>::into(g.conf.clone()) - 1) as u8),
-                ));
-            }
             let mut cmd = Commands102::from_driver(driver, PRIORITY_1);
             program_short_addresses(&mut cmd, &swaps).await?;
-            Ok(())
+            Ok(remap)
         })
     }
 }

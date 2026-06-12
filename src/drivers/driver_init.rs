@@ -11,6 +11,8 @@ use drivers::dummy::dummy;
 use drivers::helvar::helvar510;
 #[cfg(feature = "pru_driver")]
 use drivers::pru::pru_driver;
+#[cfg(feature = "simulator")]
+use drivers::simulator::simulator_driver;
 use std::sync::Once;
 
 pub fn init() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -26,6 +28,8 @@ pub fn init() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         add_driver(dali_rpi::driver_info());
         #[cfg(feature = "dummy_driver")]
         add_driver(dummy::driver_info());
+        #[cfg(feature = "simulator")]
+        add_driver(simulator_driver::driver_info());
     });
     Ok(())
 }

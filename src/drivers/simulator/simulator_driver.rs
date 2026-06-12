@@ -1,10 +1,12 @@
 use crate::drivers::driver::{
     DaliBusEvent, DaliBusEventResult, DaliBusEventType, DaliDriver, DaliFrame, DaliSendResult,
+    DriverInfo, OpenError,
 };
 use crate::drivers::send_flags::Flags;
-use crate::drivers::simulator::device::{DaliSimDevice, DaliSimEvent, DaliSimHost};
+use crate::drivers::simulator::device::{DaliSimBusEvent, DaliSimDevice, DaliSimHost};
 use crate::drivers::simulator::timing;
 use crate::utils::dyn_future::DynFuture;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::future::{self, Future};
@@ -78,7 +80,7 @@ impl DaliSimDevice for DaliSimDriverDevice {
         Box::pin(future::ready(Ok(())))
     }
 
-    fn event(&mut self, event: &DaliSimEvent) -> Option<DaliSimEvent> {
+    fn event(&mut self, event: &DaliSimBusEvent) -> Option<DaliSimBusEvent> {
         let mut ctxt = match self.ctxt.lock() {
             Ok(ctxt) => ctxt,
             Err(_) => return None,
@@ -107,7 +109,7 @@ impl DaliSimDevice for DaliSimDriverDevice {
         }
         let mut sent_answer = false;
         match event {
-            DaliSimEvent {
+            DaliSimBusEvent {
                 event_type: DaliBusEventType::Frame8(answer),
                 ..
             } => {
@@ -119,7 +121,7 @@ impl DaliSimDevice for DaliSimDriverDevice {
                     sent_answer = true;
                 }
             }
-            DaliSimEvent {
+            DaliSimBusEvent {
                 event_type: DaliBusEventType::FramingError,
                 ..
             } => {
@@ -145,7 +147,7 @@ impl DaliSimDevice for DaliSimDriverDevice {
 
         // If no answer was sent then this is an unrelated frame
         if !sent_answer {
-            let DaliSimEvent {
+            let DaliSimBusEvent {
                 timestamp,
                 event_type,
                 ..
@@ -199,6 +201,17 @@ impl DaliSimDriver {
     }
 }
 
+const BIT_DURATION: Duration = Duration::from_millis(833);
+
+fn frame_duration(frame: &DaliFrame) -> Duration {
+    match frame {
+        DaliFrame::Frame8(_) => 9 * BIT_DURATION,
+        DaliFrame::Frame16(_) => 17 * BIT_DURATION,
+        DaliFrame::Frame24(_) => 25 * BIT_DURATION,
+        DaliFrame::Frame25(_) => 26 * BIT_DURATION,
+    }
+}
+
 impl DaliDriver for DaliSimDriver {
     fn send_frame(
         &mut self,
@@ -209,7 +222,7 @@ impl DaliDriver for DaliSimDriver {
         let sim_event2;
         let answer_recv;
         let mut host: Box<dyn DaliSimHost>;
-        if let Ok(ref mut ctxt) = &mut self.ctxt.lock() {
+        if let Ok(ctxt) = &mut self.ctxt.lock() {
             if let Some(h) = &ctxt.host {
                 host = h.clone_box();
             } else {
@@ -218,9 +231,10 @@ impl DaliDriver for DaliSimDriver {
                 )));
             }
             let frame_dur = timing::frame_duration(&cmd);
-            sim_event = DaliSimEvent {
+            sim_event = DaliSimBusEvent {
                 source_id: ctxt.source_id,
                 timestamp: host.current_time(),
+                duration: Some(frame_duration(&cmd)),
                 event_type: DaliBusEventType::from(cmd),
             };
             sim_event2 = if flags.send_twice() {
@@ -268,7 +282,7 @@ impl DaliDriver for DaliSimDriver {
         })
     }
 
-    fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
+    fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult> {
         Box::pin(future::ready(Err("Not implemented".into())))
     }
 
@@ -276,7 +290,23 @@ impl DaliDriver for DaliSimDriver {
         Instant::now()
     }
 
-    fn wait_until(&self, _end: Instant) -> DynFuture<()> {
+    fn wait_until(&self, _end: Instant) -> DynFuture<'_, ()> {
         Box::pin(future::ready(()))
+    }
+}
+fn driver_open(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, OpenError> {
+    let conf_file = params
+        .get("config")
+        .map(|s| s.as_str())
+        .unwrap_or("sim.xml");
+    let (driver, _device) = DaliSimDriver::new();
+    Ok(Box::new(driver))
+}
+
+pub fn driver_info() -> DriverInfo {
+    DriverInfo {
+        name: "SIM".to_string(),
+        description: "Simulated devices".to_string(),
+        open: driver_open,
     }
 }

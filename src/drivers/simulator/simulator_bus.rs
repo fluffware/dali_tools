@@ -1,5 +1,5 @@
 use crate::drivers::driver::{
-    DaliBusEvent, DaliBusEventResult, DaliBusEventType, DaliDriver, DaliFrame, DaliSendResult,
+    DaliBusEvent, DaliBusEventResult, DaliDriver, DaliFrame, DaliSendResult,
 };
 use crate::drivers::send_flags::Flags;
 use crate::drivers::simulator::timing;
@@ -8,10 +8,9 @@ use std::borrow::BorrowMut;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::mpsc::{self, error::TryRecvError};
 use tokio::sync::oneshot;
-use tokio::time;
 
 pub struct DaliSimulatorDriver {
     bus: Arc<DaliSimulatorBus>,
@@ -28,7 +27,7 @@ enum SendState {
 }
 
 impl DaliDriver for DaliSimulatorDriver {
-    fn send_frame(&mut self, cmd: DaliFrame, flags: Flags) -> DynFuture<DaliSendResult> {
+    fn send_frame(&mut self, cmd: DaliFrame, flags: Flags) -> DynFuture<'_, DaliSendResult> {
         let mut state = self.bus.state.lock().unwrap();
         let mut send_state = SendState::Delay;
         let mut end_frame = state.data.current_timestamp;
@@ -81,7 +80,7 @@ impl DaliDriver for DaliSimulatorDriver {
         })
     }
 
-    fn next_bus_event(&mut self) -> DynFuture<DaliBusEventResult> {
+    fn next_bus_event(&mut self) -> DynFuture<'_, DaliBusEventResult> {
         Box::pin(async {
             self.bus_events
                 .recv()
@@ -94,7 +93,7 @@ impl DaliDriver for DaliSimulatorDriver {
         self.bus.current_timestamp()
     }
 
-    fn wait_until(&self, end: Instant) -> DynFuture<()> {
+    fn wait_until(&self, end: Instant) -> DynFuture<'_, ()> {
         let (sender, recv) = oneshot::channel();
         let mut sender = Some(sender);
         {
@@ -254,7 +253,7 @@ impl DaliSimulatorBus {
     }
 
     pub fn get_driver_instance(self: &Arc<DaliSimulatorBus>) -> Box<dyn DaliDriver> {
-        let (tx, rx) = mpsc::channel(5);
+        let (_tx, rx) = mpsc::channel(5);
         //self.state.lock().unwrap().data.bus_events.push(tx);
         Box::new(DaliSimulatorDriver {
             bus: self.clone(),

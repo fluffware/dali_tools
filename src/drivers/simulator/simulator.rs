@@ -1,4 +1,4 @@
-use super::device::{DaliSimDevice, DaliSimEvent, DaliSimHost};
+use super::device::{DaliSimBusEvent, DaliSimDevice, DaliSimHost};
 use super::timing;
 use crate::drivers::driver::{DaliBusEventType, DaliFrame};
 use std::collections::BinaryHeap;
@@ -10,21 +10,37 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::time::timeout_at;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-struct TimeOrderedEvent(DaliSimEvent);
+enum TimeOrderedEvent {
+    BusEvent(DaliSimBusEvent),
+    Timeout {
+        when: Instant,
+        action: oneshot::Sender<()>,
+    },
+}
+
+impl TimeOrderedEvent {
+    pub fn start_time(&self) -> Instant {
+        match self {
+            Self::BusEvent(DaliSimBusEvent { timestamp, .. }) => *timestamp,
+            Self::Timeout { when, .. } => *when,
+        }
+    }
+}
 
 impl std::cmp::PartialEq for TimeOrderedEvent {
     fn eq(&self, other: &Self) -> bool {
-        self.0.timestamp == other.0.timestamp
+        self.start_time() == other.start_time()
     }
 }
 impl std::cmp::Eq for TimeOrderedEvent {}
 
 impl std::cmp::Ord for TimeOrderedEvent {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.timestamp.cmp(&other.0.timestamp).reverse()
+        self.start_time().cmp(&other.start_time()).reverse()
     }
 }
 impl std::cmp::PartialOrd for TimeOrderedEvent {
@@ -36,7 +52,7 @@ impl std::cmp::PartialOrd for TimeOrderedEvent {
 #[derive(Clone)]
 struct DaliSimDeviceHost {
     engine: Arc<Mutex<DaliBusSimEngine>>,
-    send_event: mpsc::Sender<DaliSimEvent>,
+    send_event: mpsc::Sender<DaliSimBusEvent>,
 }
 
 static NEXT_SOURCE_ID: AtomicU32 = AtomicU32::new(1);
@@ -46,8 +62,8 @@ fn get_next_source_id() -> u32 {
 
 impl DaliSimHost for DaliSimDeviceHost {
     fn send_event(
-        &mut self,
-        event: DaliSimEvent,
+        &self,
+        event: DaliSimBusEvent,
     ) -> Pin<Box<dyn Future<Output = DynResult<()>> + Send>> {
         let send_event = self.send_event.clone();
         Box::pin(async move {
@@ -78,15 +94,22 @@ impl DaliSimHost for DaliSimDeviceHost {
         }
     }
 
-    fn next_source_id(&mut self) -> u32 {
+    fn next_source_id(&self) -> u32 {
         get_next_source_id()
     }
 
-    fn clone_box(&self) -> Box<dyn DaliSimHost> {
-        Box::new(DaliSimDeviceHost {
-            engine: self.engine.clone(),
-            send_event: self.send_event.clone(),
-        })
+    fn wait_until(&self, when: Instant) -> Pin<Box<dyn Future<Output = ()>>> {
+        if let Ok(engine) = self.engine.lock() {
+            let (tx, rx) = oneshot::channel();
+            self.engine
+                .push_event(TimeOrderedEvent::Timeout { when, action: tx });
+            Box::pin(async {
+                let _ = rx.await;
+                ()
+            })
+        } else {
+            Box::pin(tokio::time::sleep_until(when.into()))
+        }
     }
 }
 
@@ -98,50 +121,59 @@ struct DaliBusSimEngine {
     real_time: bool,
     last_event_time: Instant,
 }
-/// Add an event to the queue of events waiting for dispatch
-fn push_event(events: &mut BinaryHeap<TimeOrderedEvent>, event: DaliSimEvent) {
-    events.push(TimeOrderedEvent(event))
-}
 
-fn get_next_event(events: &mut BinaryHeap<TimeOrderedEvent>) -> Option<DaliSimEvent> {
-    match events.pop() {
-        Some(TimeOrderedEvent(event)) => {
-            let DaliSimEvent {
-                event_type,
-                timestamp,
-                source_id,
-            } = &event;
-            if let Ok(frame) = DaliFrame::try_from(event_type) {
-                // Check if frame overlaps next
-                match events.peek() {
-                    Some(TimeOrderedEvent(DaliSimEvent {
-                        timestamp: next_timestamp,
-                        ..
-                    })) => {
-                        let frame_dur = timing::frame_duration(&frame);
-                        if *timestamp + frame_dur >= *next_timestamp {
-                            Some(DaliSimEvent {
-                                event_type: DaliBusEventType::FramingError,
-                                timestamp: timestamp.clone(),
-                                source_id: *source_id,
-                            })
+impl DaliBusSimEngine {
+    /// Add an event to the queue of events waiting for dispatch
+    pub fn push_event(&mut self, event: DaliSimBusEvent) {
+        self.events.push(TimeOrderedEvent(event))
+    }
+
+    fn get_next_event(&mut self) -> Option<DaliSimBusEvent> {
+        match self.events.pop() {
+            Some(time_event) => {
+                match time_event {
+                    TimeOrderedEvent::BusEvent(event) => {
+                        let DaliSimBusEvent {
+                            event_type,
+                            timestamp,
+                            duration: frame_dur,
+                            source_id,
+                        } = &event;
+                        if let Ok(frame) = DaliFrame::try_from(event_type) {
+                            // Check if frame overlaps next
+                            match self.events.peek() {
+                                Some(TimeOrderedEvent::BusEvent(DaliSimBusEvent {
+                                    timestamp: next_timestamp,
+                                    frame_dur: next_duration,
+                                })) => {
+                                    if *timestamp + frame_dur >= *next_timestamp {
+                                        Some(DaliSimBusEvent {
+                                            event_type: DaliBusEventType::FramingError,
+                                            timestamp: timestamp.clone(),
+                                            duration: *next_timestamp + next_duration - *timestamp,
+                                            source_id: *source_id,
+                                        })
+                                    } else {
+                                        Some(event)
+                                    }
+                                }
+                                None => Some(event),
+                            }
                         } else {
                             Some(event)
                         }
                     }
-                    None => Some(event),
+                    _ => None,
                 }
-            } else {
-                Some(event)
             }
+            None => None,
         }
-        None => None,
     }
 }
 
 async fn dispatch_event(
     bus_arc: Arc<Mutex<DaliBusSimEngine>>,
-    mut event_recv: mpsc::Receiver<DaliSimEvent>,
+    mut event_recv: mpsc::Receiver<DaliSimBusEvent>,
 ) {
     let real_time = match bus_arc.lock() {
         Ok(bus) => bus.real_time,
@@ -151,7 +183,7 @@ async fn dispatch_event(
         // Get the time of the next pending event
         let next_timeout = match bus_arc.lock() {
             Ok(bus) => match bus.events.peek() {
-                Some(TimeOrderedEvent(DaliSimEvent { timestamp, .. })) => Some(timestamp.clone()),
+                Some(time_event) => Some(time_event.start_time()),
                 None => None,
             },
             Err(_) => return,
@@ -161,14 +193,14 @@ async fn dispatch_event(
             if real_time || timeout <= Instant::now() {
                 match bus_arc.lock() {
                     Ok(mut bus) => {
-                        if let Some(event) = get_next_event(&mut bus.events) {
+                        if let Some(event) = bus.get_next_event() {
                             let DaliBusSimEngine {
                                 events, devices, ..
                             } = &mut *bus;
                             eprintln!("Dispatching event: {:?}", event);
                             for dev in devices.iter_mut() {
                                 if let Some(new_event) = dev.event(&event) {
-                                    push_event(events, new_event)
+                                    bus.push_event(new_event)
                                 }
                             }
                         }
@@ -206,7 +238,7 @@ async fn dispatch_event(
         if let Some(event) = event {
             match bus_arc.lock() {
                 Ok(mut bus) => {
-                    bus.events.push(TimeOrderedEvent(event));
+                    bus.events.push(TimeOrderedEvent::BusEvent(event));
                 }
                 Err(_) => return,
             }
@@ -216,7 +248,7 @@ async fn dispatch_event(
 
 pub struct DaliBusSim {
     bus_arc: Arc<Mutex<DaliBusSimEngine>>,
-    send_event: mpsc::Sender<DaliSimEvent>,
+    send_event: mpsc::Sender<DaliSimBusEvent>,
 }
 
 impl DaliBusSim {
@@ -254,7 +286,7 @@ impl DaliBusSim {
 
     pub async fn add_event(
         &self,
-        event: DaliSimEvent,
+        event: DaliSimBusEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.send_event.send(event).await?;
         Ok(())

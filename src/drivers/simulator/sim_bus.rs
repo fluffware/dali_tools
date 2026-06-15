@@ -1,10 +1,9 @@
-use crate::drivers::driver::{DaliBusEventType, DaliFrame};
+use crate::drivers::driver::DaliBusEventType;
 use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::ops::Range;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct DaliSimBusEvent {
@@ -14,11 +13,12 @@ pub struct DaliSimBusEvent {
     pub event_type: DaliBusEventType,
 }
 
+/*
 static NEXT_SOURCE_ID: AtomicU32 = AtomicU32::new(1);
 fn get_next_source_id() -> u32 {
     NEXT_SOURCE_ID.fetch_add(1, Ordering::Relaxed)
 }
-
+*/
 pub struct DaliSimBus {
     events: RwLock<BTreeMap<Instant, DaliSimBusEvent>>,
 }

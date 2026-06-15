@@ -10,7 +10,19 @@ pub enum SimulatorEvent {
     Shutdown,
 }
 
+/// Identifies a specific task
 pub type SimulatorTaskId = NonZeroU32;
+
+/// Specifies the receiver of a message
+#[derive(Clone)]
+pub enum SimulatorMessageDest {
+    /// Only this task
+    Task(SimulatorTaskId),
+    /// All tasks except this one
+    Exclude(SimulatorTaskId),
+    /// All tasks
+    All,
+}
 
 pub trait SimulatorTask {
     /// Current simulated instant
@@ -24,9 +36,11 @@ pub trait SimulatorTask {
     // Let time progress without waiting for this task
     fn wait(&mut self) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>>;
 
-    fn send_msg(&self, task_id: Option<SimulatorTaskId>, msg: Arc<dyn Any + Send + Sync>);
+    fn send_msg(&self, dest: SimulatorMessageDest, msg: Arc<dyn Any + Send + Sync>);
 
     fn real_time(&self) -> bool;
+
+    fn task_id(&self) -> SimulatorTaskId;
 }
 
 pub trait SimulatorScheduler {

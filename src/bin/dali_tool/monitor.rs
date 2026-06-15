@@ -38,6 +38,12 @@ fn execute<'a>(
                             print!("    ");
                             println!("{}", decoder.decode_packet(pkt))
                         }
+                        DaliBusEventType::Frame8(value) => {
+                            let pkt = [value];
+                            print!(" {:02x}", value);
+                            print!("       ");
+                            println!("{}", decoder.decode_packet(&pkt))
+                        }
                         _ => println!("{:?}", event_type),
                     }
                 }

@@ -1,8 +1,7 @@
 use crate::common::address::Short;
 use crate::drivers::command_utils::send16;
 use crate::drivers::driver::{DaliDriver, DaliSendResult};
-use crate::drivers::driver_utils::DaliDriverExt;
-use crate::drivers::send_flags::NO_FLAG;
+use crate::drivers::send_flags::{NO_FLAG, PRIORITY_1};
 use crate::gear::cmd_defs as cmd;
 use log::debug;
 use std::convert::TryInto;
@@ -123,16 +122,15 @@ pub async fn read_range(
     start: u8,
     length: u8,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    d.send_frame16(&cmd::DTR1(bank).0, NO_FLAG)
-        .await
-        .check_send()?;
-    d.send_frame16(&cmd::DTR0(start).0, NO_FLAG)
-        .await
-        .check_send()?;
+    send16::set_dtr1(d, bank, NO_FLAG).await.check_send()?;
+    send16::set_dtr0(d, start, NO_FLAG).await.check_send()?;
     let mut data = Vec::new();
     for offset in 0..length {
-        match send16::query(d, cmd::READ_MEMORY_LOCATION(addr), NO_FLAG).await {
-            DaliSendResult::Answer(d) => data.push(d),
+        match send16::query(d, cmd::READ_MEMORY_LOCATION(addr), PRIORITY_1).await {
+            DaliSendResult::Answer(d) => {
+                debug!("Reading {},{}: 0x{:02x}", bank, start + offset, d);
+                data.push(d)
+            }
             DaliSendResult::Timeout => {
                 return Err(format!(
                     "Address {} of bank {} is not implemented",

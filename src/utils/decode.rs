@@ -675,7 +675,7 @@ impl DecoderState {
                         if let Some(decoder) = self.extended.take() {
                             decoder.decode_device_cmd(&self, pkt)
                         } else {
-                            format!("Application extended command 0x{:02x}", pkt[0])
+                            format!("Application extended command 0x{:02x}", pkt[1])
                         }
                     }
                     0x2a => format!("Store DTR as max level ({})", self.dtr[0]),
@@ -733,12 +733,17 @@ impl DecoderState {
         }
         str
     }
+    fn decode_8bit(&mut self, pkt: &[u8; 1]) -> String {
+        let value = pkt[0];
+        format!("{} (0b{:08b})", value, value)
+    }
 
     pub fn decode_packet(&mut self, pkt: &[u8]) -> String {
         let len = pkt.len();
         match len {
             3 => self.decode_24bit(pkt.try_into().unwrap()),
             2 => self.decode_16bit(pkt.try_into().unwrap()),
+            1 => self.decode_8bit(pkt.try_into().unwrap()),
             _ => "Unhandled packet length".to_string(),
         }
     }

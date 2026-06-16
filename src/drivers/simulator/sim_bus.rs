@@ -7,7 +7,7 @@ use std::time::Instant;
 
 #[derive(Clone)]
 pub struct DaliSimBusEvent {
-    pub source_id: u32,
+    pub source_id: SimulatorTaskId,
     pub start: Option<Instant>, // Time of first transition of frame.  Only for frames
     pub end: Instant,           // Time of last transition.
     pub event_type: DaliBusEventType,
@@ -34,10 +34,21 @@ where
     }
 }
 
+async bus_task(task: SimulatorTask) {
+    loop {
+	let end_time = event.rea().unwrap().last();
+	if end_time == task.current_time() {
+	    
+	    match  task.wait_until(end_time).await {
+	
+    
+}
+
 impl DaliSimBus {
-    pub fn new() -> DaliSimBus {
+    pub fn new(scheduler) -> DaliSimBus {
         DaliSimBus {
             events: RwLock::new(BTreeMap::new()),
+	    scheduler,
         }
     }
 
@@ -89,9 +100,5 @@ impl DaliSimBus {
         }
     }
 
-    pub fn get_events(&self, after: Instant) -> Vec<DaliSimBusEvent> {
-        let events = self.events.read().unwrap();
-        let matched = events.range((Bound::Included(after), Bound::Unbounded));
-        matched.map(|x| x.1.clone()).collect()
-    }
+    
 }

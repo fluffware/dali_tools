@@ -1,6 +1,6 @@
 use crate::drivers::driver;
 use driver::DaliFrame;
-use rand::{Rng, rng};
+use rand::prelude::*;
 use std::time::Duration;
 
 pub const HALF_BIT_MICROS: u64 = 417;
@@ -51,7 +51,8 @@ pub fn send_delay(priority: u16, random: bool) -> Duration {
         _ => delay_range!(19500, 21100),
     };
     Duration::from_millis(if random {
-        send_min + rng().random_range(0..=send_interval)
+        let mut rng = rand::rng();
+        send_min + rng.random_range(0..=send_interval)
     } else {
         send_min
     })

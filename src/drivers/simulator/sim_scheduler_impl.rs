@@ -169,10 +169,7 @@ impl SimulatorTask for SimulatorTaskImpl {
 
     /// All tasks must eventually wait, otherwise time may not
     /// progress
-    fn wait_until(
-        &mut self,
-        when: Instant,
-    ) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
+    fn wait_until(&self, when: Instant) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
         let (tx, rx) = oneshot::channel();
         let data = &mut self.data.data.write().unwrap();
         data.update_task(
@@ -189,7 +186,7 @@ impl SimulatorTask for SimulatorTaskImpl {
         }))
     }
 
-    fn wait(&mut self) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
+    fn wait(&self) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
         let (tx, rx) = oneshot::channel();
         let mut data = self.data.data.write().unwrap();
         data.update_task(self.task_index, TaskState::Wait { trig: tx });
@@ -378,7 +375,7 @@ mod test {
                 SimulatorEvent::Message(msg) => {
                     let ts = msg.downcast_ref::<Instant>().unwrap();
                     assert_eq!(*ts, task.current_time());
-		    continue;
+                    continue;
                 }
             }
             task.send_msg(dest.clone(), Arc::new(task.current_time()));
@@ -398,9 +395,9 @@ mod test {
             ));
         }
         let mut task = sched.new_task();
-	let end_time = task.current_time() + Duration::from_secs(60);
+        let end_time = task.current_time() + Duration::from_secs(60);
         task.wait_until(end_time).await;
-	assert_eq!(task.current_time(), end_time);
+        assert_eq!(task.current_time(), end_time);
         task.send_msg(SimulatorMessageDest::All, Arc::new(true));
         while !matches!(task.wait().await, SimulatorEvent::Message(_)) {}
     }

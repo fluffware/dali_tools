@@ -30,11 +30,10 @@ pub trait SimulatorTask {
 
     /// All tasks must evetually wait, otherwise
     /// time may not progress
-    fn wait_until(&mut self, when: Instant)
-    -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>>;
+    fn wait_until(&self, when: Instant) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>>;
 
     // Let time progress without waiting for this task
-    fn wait(&mut self) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>>;
+    fn wait(&self) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>>;
 
     fn send_msg(&self, dest: SimulatorMessageDest, msg: Arc<dyn Any + Send + Sync>);
 

@@ -1,7 +1,6 @@
+use super::sim_scheduler::{SimulatorEvent, SimulatorMessageDest, SimulatorTask, SimulatorTaskId};
 use crate::drivers::driver::DaliBusEventType;
-use std::collections::BTreeMap;
-use std::ops::Bound;
-use std::ops::Range;
+use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Instant;
 
@@ -20,85 +19,79 @@ fn get_next_source_id() -> u32 {
 }
 */
 pub struct DaliSimBus {
-    events: RwLock<BTreeMap<Instant, DaliSimBusEvent>>,
+    events: RwLock<Vec<DaliSimBusEvent>>,
 }
 
-fn extend_range<T>(range: &mut Range<T>, v: T)
-where
-    T: Ord,
-{
-    if v < range.start {
-        range.start = v;
-    } else if v > range.end {
-        range.end = v
-    }
-}
-
-async bus_task(task: SimulatorTask) {
+async fn bus_task(task: Box<dyn SimulatorTask>, bus: Arc<DaliSimBus>) {
     loop {
-	let end_time = event.rea().unwrap().last();
-	if end_time == task.current_time() {
-	    
-	    match  task.wait_until(end_time).await {
-	
-    
+        if let Some(event) = bus.events.read().unwrap().last() {
+            let end_time = event.end;
+            match task.wait_until(end_time).await {
+                SimulatorEvent::Timeout => {
+                    while let Some(event) =
+                        bus.events.write().unwrap().pop_if(|ev| ev.end <= end_time)
+                    {
+                        task.send_msg(
+                            SimulatorMessageDest::Exclude(task.task_id()),
+                            Arc::new(event),
+                        );
+                    }
+                }
+                SimulatorEvent::Message(_) => {}
+                SimulatorEvent::Shutdown => break,
+            }
+        }
+    }
 }
 
 impl DaliSimBus {
-    pub fn new(scheduler) -> DaliSimBus {
-        DaliSimBus {
-            events: RwLock::new(BTreeMap::new()),
-	    scheduler,
-        }
+    pub fn new(task: Box<dyn SimulatorTask>) -> Arc<DaliSimBus> {
+        Arc::new(DaliSimBus {
+            events: RwLock::new(Vec::new()),
+        })
     }
 
-    pub fn add_avent(&self, event: DaliSimBusEvent) {
+    pub fn add_avent(self: &Arc<DaliSimBus>, new_event: DaliSimBusEvent) {
         use DaliBusEventType::*;
-        let mut collision: Option<Range<Instant>> = None;
-        let mut remove = Vec::new();
-        match event.event_type {
+        let mut new_event = new_event;
+        match new_event.event_type {
             Frame8(_) | Frame16(_) | Frame24(_) | Frame25(_) | FramingError => {
-                if let Some(start) = event.start {
-                    let events = self.events.read().unwrap();
-                    let mut matched = events.range((Bound::Included(start), Bound::Unbounded));
-                    while let Some(m) = &matched.next() {
-                        if let Some(m_start) = m.1.start {
-                            if m_start > event.end {
+                let mut events = self.events.write().unwrap();
+                if let Some(start) = new_event.start {
+                    let first = events.partition_point(|ev| start > ev.end);
+
+                    let mut last = first;
+                    while last < events.len() {
+                        if let Some(event_start) = events[last].start {
+                            if event_start > new_event.end {
                                 break;
                             }
-                            if m.1.end >= start {
-                                let collision = collision.get_or_insert_with(|| Range {
-                                    start,
-                                    end: event.end,
-                                });
-                                extend_range(collision, m_start);
-                                extend_range(collision, m.1.end);
-                                remove.push(m.0.clone());
+                        }
+                        last += 1;
+                    }
+                    if last > first {
+                        // Collision
+                        if let Some(event_start) = events[first].start {
+                            if event_start < start {
+                                new_event.start = Some(event_start);
                             }
                         }
+                        if events[last - 1].end > new_event.end {
+                            new_event.end = events[last - 1].end;
+                        }
+                        new_event.event_type = DaliBusEventType::FramingError;
+                        events.drain(first + 1..last);
+                        events[first] = new_event;
+                    } else {
+                        events.insert(first, new_event);
                     }
+                } else {
+                    let mut events = self.events.write().unwrap();
+                    let pos = events.partition_point(|ev| new_event.end > ev.end);
+                    events.insert(pos, new_event);
                 }
             }
             _ => {}
         }
-        if let Some(collision) = collision {
-            let mut events = self.events.write().unwrap();
-            for r in remove {
-                events.remove(&r);
-            }
-            events.insert(
-                collision.end,
-                DaliSimBusEvent {
-                    source_id: 0,
-                    start: Some(collision.start),
-                    end: collision.end,
-                    event_type: DaliBusEventType::FramingError,
-                },
-            );
-        } else {
-            self.events.write().unwrap().insert(event.end, event);
-        }
     }
-
-    
 }

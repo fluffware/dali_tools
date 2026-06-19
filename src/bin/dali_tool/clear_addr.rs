@@ -49,7 +49,7 @@ pub fn init_subtool() -> SubTool {
                 .short('c')
                 .long("control")
                 .action(clap::ArgAction::SetTrue)
-                .help("Read info from control devices"),
+                .help("Clear address for control device"),
         );
 
     SubTool {

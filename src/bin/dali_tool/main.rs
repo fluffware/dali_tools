@@ -13,6 +13,7 @@ mod power;
 mod query;
 mod randomize;
 mod send;
+mod set_addr;
 mod swap;
 use log::debug;
 
@@ -47,6 +48,7 @@ async fn main() {
     add_tool(power::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(discover::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(clear_addr::init_subtool(), &mut tool_map, &mut cli_cmd);
+    add_tool(set_addr::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(randomize::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(swap::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(send::init_subtool(), &mut tool_map, &mut cli_cmd);

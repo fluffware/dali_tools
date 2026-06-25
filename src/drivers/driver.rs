@@ -95,6 +95,7 @@ pub enum DaliBusEventType {
     Frame16([u8; 2]),
     Frame24([u8; 3]),
     Frame25([u8; 4]),
+    FrameStart,
     FramingError,
     BusPowerOff,
     BusPowerOn,

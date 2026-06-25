@@ -37,6 +37,8 @@ pub trait SimulatorTask {
 
     fn send_msg(&self, dest: SimulatorMessageDest, msg: Arc<dyn Any + Send + Sync>);
 
+    fn shutdown(&self);
+
     fn real_time(&self) -> bool;
 
     fn task_id(&self) -> SimulatorTaskId;

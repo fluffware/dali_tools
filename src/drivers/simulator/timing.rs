@@ -13,6 +13,7 @@ pub const FRAME_25_DURATION: Duration = Duration::from_micros(BIT_MICROS * 26);
 pub const SEND_TWICE_DURATION: Duration = Duration::from_millis(94);
 pub const REPLY_DELAY: Duration = Duration::from_millis(5);
 pub const INIT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+pub const STOP_CONDITION: Duration = Duration::from_micros(2400);
 
 pub fn frame_duration(frame: &DaliFrame) -> Duration {
     use DaliFrame::*;

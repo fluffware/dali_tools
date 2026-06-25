@@ -3,6 +3,7 @@ use super::sim_scheduler::{
 };
 use futures::FutureExt;
 use std::any::Any;
+use std::future;
 use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -28,11 +29,6 @@ pub enum TaskState {
 type TaskIndex = usize;
 pub struct SchedulerDataMut {
     current_time: Instant,
-    active_task_count: usize,
-    // Contains indices into task_states for those states that are
-    // waiting.  Sorted by Wait first, followed by WaitUntil with the
-    // earliest last
-    wait_queue: Vec<TaskIndex>,
     task_states: Vec<TaskState>,
     message_queue: Vec<(SimulatorMessageDest, Arc<dyn Any + Send + Sync>)>,
 }
@@ -42,62 +38,39 @@ pub struct SchedulerData {
 }
 
 impl SchedulerDataMut {
-    fn update_task(&mut self, task_index: TaskIndex, new_state: TaskState) -> TaskState {
-        use TaskState::*;
-        let current_state = self
-            .task_states
-            .get(task_index)
-            .expect("Invalid task index");
-        let queue = &mut self.wait_queue;
-        match (&current_state, &new_state) {
-            (Wait { .. }, None)
-            | (Wait { .. }, Running)
-            | (WaitUntil { .. }, None)
-            | (WaitUntil { .. }, Running)
-            | (WaitUntil { .. }, Wait { .. })
-            | (Wait { .. }, WaitUntil { .. })
-            | (WaitUntil { .. }, WaitUntil { .. }) => {
-                queue.retain(|x| task_index != *x);
-            }
-            _ => (),
-        }
-        match &new_state {
-            WaitUntil {
-                when: task_when, ..
-            } => {
-                let index =
-                    queue.partition_point(|queue_index| match self.task_states[*queue_index] {
-                        WaitUntil {
-                            when: queued_when, ..
-                        } => queued_when >= *task_when,
-                        Wait { .. } => true,
-                        _ => panic!("Non waiting tasks in wait queue"),
-                    });
-                queue.insert(index, task_index);
-            }
-            Wait { .. } => queue.insert(0, task_index),
-            _ => {}
-        };
-        mem::replace(&mut self.task_states[task_index], new_state)
-    }
-
     fn process_events(&mut self) {
         use TaskState::*;
         // Only process events if all tasks are waiting
-        if self.active_task_count > self.wait_queue.len() {
-            return;
+        let mut earliest: Option<(Instant, usize)> = Option::None;
+        for (task_index, task_state) in self.task_states.iter().enumerate() {
+            match task_state {
+                TaskState::Running => {
+                    return; // All tasks must be waiting
+                }
+                WaitUntil { when, .. } => {
+                    if let Some((earliest_when, _)) = earliest
+                        && &earliest_when <= when
+                    {
+                    } else {
+                        earliest = Some((*when, task_index));
+                    }
+                }
+                _ => {}
+            }
         }
         if let Some((dest, msg)) = self.message_queue.pop() {
             match dest {
                 SimulatorMessageDest::Task(task_id) => {
                     let task_index = usize::try_from(task_id.get()).unwrap() - 1;
-
-                    let old_state = self.update_task(task_index, Running);
+                    let task_state = &mut self.task_states[task_index];
+                    let old_state = mem::replace(task_state, TaskState::Running);
                     match old_state {
                         WaitUntil { trig, .. } | Wait { trig, .. } => {
                             let _ = trig.send(SimulatorEvent::Message(msg.clone()));
-                            self.update_task(task_index, Running);
                             return;
+                        }
+                        None => {
+                            *task_state = TaskState::None;
                         }
                         _ => panic!("Sending to non waiting task"),
                     }
@@ -105,58 +78,73 @@ impl SchedulerDataMut {
                 SimulatorMessageDest::Exclude(task_id) => {
                     let exclude_index = usize::try_from(task_id.get()).unwrap() - 1;
                     // Remove here and put it back later
-                    self.wait_queue.swap_remove(exclude_index);
-                    for task_index in 0..self.task_states.len() {
-                        let old_state = self.update_task(task_index, Running);
-                        match old_state {
-                            WaitUntil { trig, .. } | Wait { trig, .. } => {
-                                let _ = trig.send(SimulatorEvent::Message(msg.clone()));
+                    for (task_index, task_state) in &mut self.task_states.iter_mut().enumerate() {
+                        if exclude_index != task_index {
+                            let old_state = mem::replace(task_state, Running);
+                            match old_state {
+                                WaitUntil { trig, .. } | Wait { trig, .. } => {
+                                    let _ = trig.send(SimulatorEvent::Message(msg.clone()));
+                                }
+                                Running => panic!("Trying to send message to running task"),
+                                None => {
+                                    *task_state = TaskState::None;
+                                }
                             }
-                            Running => panic!("Trying to send message to running task"),
-                            None => {}
                         }
                     }
-                    self.wait_queue.push(exclude_index);
                     return;
                 }
                 SimulatorMessageDest::All => {
-                    for task_index in 0..self.task_states.len() {
-                        let old_state = self.update_task(task_index, Running);
+                    for task_state in &mut self.task_states {
+                        let old_state = mem::replace(task_state, Running);
                         match old_state {
                             WaitUntil { trig, .. } | Wait { trig, .. } => {
                                 let _ = trig.send(SimulatorEvent::Message(msg.clone()));
                             }
                             Running => panic!("Trying to send message to running task"),
-                            None => {}
+                            None => {
+                                *task_state = TaskState::None;
+                            }
                         }
                     }
                     return;
                 }
             }
         }
-
-        while let Some(state_index) = self.wait_queue.last().cloned() {
+        while let Some((earliest_when, earliest_index)) = earliest {
             let task_state = self
                 .task_states
-                .get(state_index)
-                .expect("Invalid index in queue");
+                .get_mut(earliest_index)
+                .expect("Invalid task index");
             match task_state {
                 WaitUntil { when, .. } => {
-                    if *when <= self.current_time {
-                        self.wait_queue.pop().unwrap();
-                        let WaitUntil { trig, .. } = self.update_task(state_index, Running) else {
+                    if earliest_when <= self.current_time {
+                        let WaitUntil { trig, .. } = mem::replace(task_state, Running) else {
                             panic!("Not WaitUntil");
                         };
                         let _ = trig.send(SimulatorEvent::Timeout);
+                        return;
                     } else {
-                        if self.active_task_count > self.wait_queue.len() {
-                            break;
-                        }
                         self.current_time = *when;
                     }
                 }
-                Wait { .. } => break,
-                _ => panic!("Non waiting tasks in wait queue"),
+                Wait { .. } => {}
+                _ => panic!("Non waiting tasks"),
+            }
+
+            for (task_index, task_state) in self.task_states.iter().enumerate() {
+                match task_state {
+                    TaskState::Running => return, // All tasks must be waiting
+                    WaitUntil { when, .. } => {
+                        if let Some((earliest_when, _)) = earliest
+                            && &earliest_when <= when
+                        {
+                        } else {
+                            earliest = Some((*when, task_index));
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -170,15 +158,17 @@ impl SimulatorTask for SimulatorTaskImpl {
     /// All tasks must eventually wait, otherwise time may not
     /// progress
     fn wait_until(&self, when: Instant) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
-        let (tx, rx) = oneshot::channel();
+        println!("Task {} waiting until {:?}", self.task_index, when);
         let data = &mut self.data.data.write().unwrap();
-        data.update_task(
-            self.task_index,
-            TaskState::WaitUntil {
-                when: when,
-                trig: tx,
-            },
-        );
+        if let TaskState::None = data.task_states[self.task_index] {
+            return Box::pin(future::ready(SimulatorEvent::Shutdown));
+        }
+        let (tx, rx) = oneshot::channel();
+
+        data.task_states[self.task_index] = TaskState::WaitUntil {
+            when: when,
+            trig: tx,
+        };
         data.process_events();
         Box::pin(rx.map(|r| match r {
             Ok(ev) => ev,
@@ -187,9 +177,13 @@ impl SimulatorTask for SimulatorTaskImpl {
     }
 
     fn wait(&self) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
-        let (tx, rx) = oneshot::channel();
+        println!("Task {} waiting", self.task_index);
         let mut data = self.data.data.write().unwrap();
-        data.update_task(self.task_index, TaskState::Wait { trig: tx });
+        if let TaskState::None = data.task_states[self.task_index] {
+            return Box::pin(future::ready(SimulatorEvent::Shutdown));
+        }
+        let (tx, rx) = oneshot::channel();
+        data.task_states[self.task_index] = TaskState::Wait { trig: tx };
         data.process_events();
         Box::pin(rx.map(|r| match r {
             Ok(ev) => ev,
@@ -200,6 +194,11 @@ impl SimulatorTask for SimulatorTaskImpl {
     fn send_msg(&self, dest: SimulatorMessageDest, msg: Arc<dyn Any + Send + Sync>) {
         let data = &mut self.data.data.write().unwrap();
         data.message_queue.push((dest, msg));
+        data.process_events();
+    }
+    fn shutdown(&self) {
+        let data = &mut self.data.data.write().unwrap();
+        data.task_states[self.task_index] = TaskState::None;
         data.process_events();
     }
 
@@ -214,8 +213,7 @@ impl SimulatorTask for SimulatorTaskImpl {
 impl Drop for SimulatorTaskImpl {
     fn drop(&mut self) {
         let data = &mut self.data.data.write().unwrap();
-        data.active_task_count -= 1;
-        data.update_task(self.task_index, TaskState::None);
+        data.task_states[self.task_index] = TaskState::None;
         data.process_events();
     }
 }
@@ -232,9 +230,7 @@ pub struct SimulatorSchedulerImpl {
 impl SimulatorSchedulerImpl {
     pub fn new() -> SimulatorSchedulerImpl {
         let data = SchedulerDataMut {
-            active_task_count: 0,
             current_time: Instant::now(),
-            wait_queue: Vec::new(),
             message_queue: Vec::new(),
             task_states: Vec::new(),
         };
@@ -246,10 +242,25 @@ impl SimulatorSchedulerImpl {
     }
 }
 
+impl Drop for SimulatorSchedulerImpl {
+    fn drop(&mut self) {
+        let data = &mut self.data.data.write().unwrap();
+        data.message_queue.clear();
+        for task_state in &mut data.task_states {
+            let old_state = mem::replace(task_state, TaskState::None);
+            match old_state {
+                TaskState::Wait { trig, .. } | TaskState::WaitUntil { trig, .. } => {
+                    let _ = trig.send(SimulatorEvent::Shutdown);
+                }
+                _ => {}
+            };
+            *task_state = TaskState::None;
+        }
+    }
+}
 impl SimulatorScheduler for SimulatorSchedulerImpl {
     fn new_task(&mut self) -> Box<dyn SimulatorTask + Send + Sync> {
         let data = &mut self.data.data.write().unwrap();
-        data.active_task_count += 1;
         data.task_states.push(TaskState::Running);
         Box::new(SimulatorTaskImpl {
             task_index: data.task_states.len() - 1,
@@ -264,16 +275,16 @@ mod test {
     use super::SimulatorScheduler;
     use super::SimulatorSchedulerImpl;
     use super::{SimulatorEvent, SimulatorTask, SimulatorTaskId};
-    use rand::Rng;
+    use rand::RngExt;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
     use std::any::Any;
-    use std::pin::Pin;
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
+    use tokio::task::JoinSet;
 
-    async fn wait_task(mut task: Box<dyn SimulatorTask + Send + Sync>, delay: Duration) {
+    async fn wait_task(task: Box<dyn SimulatorTask + Send + Sync>, delay: Duration) {
         let start_time = task.current_time();
         println!("Task waiting");
         task.wait_until(start_time + delay).await;
@@ -284,7 +295,7 @@ mod test {
     #[tokio::test]
     async fn scheduler_test() {
         let mut sched = SimulatorSchedulerImpl::new();
-        let mut task1 = sched.new_task();
+        let task1 = sched.new_task();
         let start_time = task1.current_time();
         task1
             .wait_until(task1.current_time() + Duration::from_secs(1))
@@ -319,7 +330,7 @@ mod test {
         }
     }
 
-    async fn event_task(mut task: Box<dyn SimulatorTask + Send + Sync>) {
+    async fn event_task(task: Box<dyn SimulatorTask + Send + Sync>) {
         let start_time = task.current_time();
         assert_message(&task.wait().await, &3);
         println!("Task 2: Message received");
@@ -336,7 +347,7 @@ mod test {
     #[tokio::test]
     async fn event_test() {
         let mut sched = SimulatorSchedulerImpl::new();
-        let mut task1 = sched.new_task();
+        let task1 = sched.new_task();
         let task2 = sched.new_task();
         let task2_id = task2.task_id();
         let w2 = tokio::spawn(event_task(task2));
@@ -359,10 +370,7 @@ mod test {
 
     const TASK_COUNT: usize = 10;
 
-    async fn random_task(
-        mut task: Box<dyn SimulatorTask + Send + Sync>,
-        dest: SimulatorMessageDest,
-    ) {
+    async fn random_task(task: Box<dyn SimulatorTask + Send + Sync>, dest: SimulatorMessageDest) {
         let mut rng = SmallRng::seed_from_u64(u64::from(task.task_id().get()));
         loop {
             let end_time = task.current_time() + Duration::from_millis(rng.random_range(300..7000));
@@ -373,32 +381,34 @@ mod test {
                     assert_eq!(task.current_time(), end_time);
                 }
                 SimulatorEvent::Message(msg) => {
-                    let ts = msg.downcast_ref::<Instant>().unwrap();
+                    let ts = msg.as_ref().downcast_ref::<Instant>().unwrap();
                     assert_eq!(*ts, task.current_time());
                     continue;
                 }
             }
-            task.send_msg(dest.clone(), Arc::new(task.current_time()));
+            task.send_msg(dest.clone(), Arc::new(task.current_time() as Instant));
         }
     }
     #[tokio::test]
     async fn random_test() {
         let mut rng = rand::rng();
         let mut sched = SimulatorSchedulerImpl::new();
+        let mut threads = JoinSet::new();
         for _ in 0..TASK_COUNT {
             let task = sched.new_task();
-            tokio::spawn(random_task(
+            threads.spawn(random_task(
                 task,
                 SimulatorMessageDest::Task(
                     SimulatorTaskId::new(rng.random_range(1u32..=TASK_COUNT as u32)).unwrap(),
                 ),
             ));
         }
-        let mut task = sched.new_task();
+        let task = sched.new_task();
         let end_time = task.current_time() + Duration::from_secs(60);
         task.wait_until(end_time).await;
         assert_eq!(task.current_time(), end_time);
         task.send_msg(SimulatorMessageDest::All, Arc::new(true));
-        while !matches!(task.wait().await, SimulatorEvent::Message(_)) {}
+        drop(sched);
+        while let Some(_res) = threads.join_next().await {}
     }
 }

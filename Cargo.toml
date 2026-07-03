@@ -38,6 +38,8 @@ bytes={version="*", optional=true}
 rust-embed={version="6.7.0", features=["include-exclude"], optional=true}
 yaml_serde = "0.10.4"
 rand = { version = "0.10.1", features = ["thread_rng"] }
+paste = "1.0.15"
+linkme = "0.3.36"
 
 [[bin]]
 name = "helvar_dump"

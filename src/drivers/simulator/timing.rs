@@ -51,7 +51,7 @@ pub fn send_delay(priority: u16, random: bool) -> Duration {
         4 => delay_range!(17900, 19300),
         _ => delay_range!(19500, 21100),
     };
-    Duration::from_millis(if random {
+    Duration::from_micros(if random {
         let mut rng = rand::rng();
         send_min + rng.random_range(0..=send_interval)
     } else {

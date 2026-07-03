@@ -28,8 +28,6 @@ async fn bus_task(
     events: Arc<RwLock<Vec<DaliSimBusEvent>>>,
 ) {
     loop {
-        println!("Bus loop");
-
         let wait_event;
         {
             let events = events.read().unwrap();
@@ -118,6 +116,75 @@ impl DaliSimBus {
 impl Drop for DaliSimBus {
     fn drop(&mut self) {
         self.task.shutdown();
+    }
+}
+
+#[derive(Debug)]
+pub enum DaliSimBusDeviceEvent {
+    Timeout,
+    Shutdown,
+    Message(DaliSimBusEvent),
+}
+
+pub struct DaliSimBusDevice {
+    task: Box<dyn SimulatorTask + Send + Sync>,
+    bus: Arc<DaliSimBus>,
+}
+
+impl DaliSimBusDevice {
+    pub fn new(
+        bus: Arc<DaliSimBus>,
+        task: Box<dyn SimulatorTask + Send + Sync>,
+    ) -> DaliSimBusDevice {
+        DaliSimBusDevice { task, bus }
+    }
+    pub fn add_event(
+        &self,
+        event_type: DaliBusEventType,
+        timestamp: Instant,
+        start: Option<Instant>,
+    ) {
+        self.bus.add_event(DaliSimBusEvent {
+            source_id: self.task.task_id(),
+            event_type,
+            timestamp,
+            start,
+        });
+    }
+
+    pub fn current_time(&self) -> Instant {
+        self.task.current_time()
+    }
+
+    pub async fn wait_until(&self, when: Instant) -> DaliSimBusDeviceEvent {
+        loop {
+            match self.task.wait_until(when).await {
+                SimulatorEvent::Timeout => return DaliSimBusDeviceEvent::Timeout,
+                SimulatorEvent::Message(msg) => {
+                    if let Some(bus_event) = msg.downcast_ref::<DaliSimBusEvent>()
+                        && bus_event.source_id != self.task.task_id()
+                    {
+                        return DaliSimBusDeviceEvent::Message(bus_event.clone());
+                    }
+                }
+                SimulatorEvent::Shutdown => return DaliSimBusDeviceEvent::Shutdown,
+            }
+        }
+    }
+    pub async fn wait(&self) -> DaliSimBusDeviceEvent {
+        loop {
+            match self.task.wait().await {
+                SimulatorEvent::Timeout => panic!("Timout received in wait"),
+                SimulatorEvent::Message(msg) => {
+                    if let Some(bus_event) = msg.downcast_ref::<DaliSimBusEvent>()
+                        && bus_event.source_id != self.task.task_id()
+                    {
+                        return DaliSimBusDeviceEvent::Message(bus_event.clone());
+                    }
+                }
+                SimulatorEvent::Shutdown => return DaliSimBusDeviceEvent::Shutdown,
+            }
+        }
     }
 }
 

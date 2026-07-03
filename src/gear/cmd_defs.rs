@@ -1,4 +1,5 @@
 use crate::common::cmd_defs::AddressByte;
+use paste::paste;
 
 pub struct Command<const ANSWER: bool, const TWICE: bool>(pub [u8; 2]);
 
@@ -18,11 +19,14 @@ macro_rules! dev_cmd_def {
         {
             Command([addr.into().0, $opcode])
         }
+	paste!{
+	    pub const [<$sym _OPCODE_BYTE>]: u8 = $opcode;
+	}
     };
 }
 
 macro_rules! offset_cmd_def {
-    ($sym: ident, $opcode: expr $(,$attr: ident)?) => {
+    ($sym: ident, $opcode: expr, $count: expr $(,$attr: ident)?) => {
         #[allow(non_snake_case)]
         #[inline(always)]
         pub fn $sym<A>(addr: A, offset: u8) -> cmd_type!($($attr)?)
@@ -31,6 +35,10 @@ macro_rules! offset_cmd_def {
         {
             Command([addr.into().0, $opcode + offset])
         }
+	paste!{
+	    pub const [<$sym _FIRST_OPCODE_BYTE>]: u8 = $opcode;
+	    pub const [<$sym _LAST_OPCODE_BYTE>]: u8 = $opcode + $count - 1;
+	}
     };
 }
 
@@ -41,6 +49,10 @@ macro_rules! special_cmd_def {
         pub const fn $sym() -> cmd_type!($($attr)?) {
             Command([$byte1, $byte2])
         }
+	paste!{
+	    pub const [<$sym _ADDRESS_BYTE>]: u8 = $byte1;
+	    pub const [<$sym _OPCODE_BYTE>]: u8 = $byte2;
+	}
     };
 }
 
@@ -51,6 +63,9 @@ macro_rules! special_data_cmd_def {
         pub const fn $sym(data: u8) ->cmd_type!($($attr)?) {
             Command([$byte1, data])
         }
+	paste!{
+	    pub const [<$sym _ADDRESS_BYTE>]: u8 = $byte1;
+	}
     };
 }
 
@@ -79,7 +94,7 @@ dev_cmd_def!(ON_AND_STEP_UP, 0x08);
 dev_cmd_def!(ENABLE_DAPC, 0x09);
 dev_cmd_def!(GO_TO_LAST_ACTIVE_LEVEL, 0x0a);
 
-offset_cmd_def!(GOTO_SCENE, 0x10);
+offset_cmd_def!(GOTO_SCENE, 0x10, 16);
 
 dev_cmd_def!(RESET, 0x20, Twice);
 dev_cmd_def!(STORE_ACTUAL_LEVEL_IN_DTR0, 0x21, Twice);
@@ -96,11 +111,11 @@ dev_cmd_def!(SET_FADE_TIME, 0x2e, Twice);
 dev_cmd_def!(SET_FADE_RATE, 0x2f, Twice);
 dev_cmd_def!(SET_EXTENDED_FADE_TIME, 0x30, Twice);
 
-offset_cmd_def!(SET_SCENE, 0x40, Twice);
-offset_cmd_def!(REMOVE_FROM_SCENE, 0x50, Twice);
+offset_cmd_def!(SET_SCENE, 0x40, 16, Twice);
+offset_cmd_def!(REMOVE_FROM_SCENE, 16, 0x50, Twice);
 
-offset_cmd_def!(ADD_TO_GROUP, 0x60, Twice);
-offset_cmd_def!(REMOVE_FROM_GROUP, 0x70, Twice);
+offset_cmd_def!(ADD_TO_GROUP, 0x60, 16, Twice);
+offset_cmd_def!(REMOVE_FROM_GROUP, 0x70, 16, Twice);
 
 dev_cmd_def!(SET_SHORT_ADDRESS, 0x80, Twice);
 dev_cmd_def!(ENABLE_WRITE_MEMORY, 0x81, Twice);
@@ -135,7 +150,7 @@ dev_cmd_def!(QUERY_NEXT_DEVICE_TYPE, 0xa7, Answer);
 dev_cmd_def!(QUERY_EXTENDED_FADE_TIME, 0xa8, Answer);
 dev_cmd_def!(QUERY_CONTROL_GEAR_FAILURE, 0xaa, Answer);
 
-offset_cmd_def!(QUERY_SCENE_LEVEL, 0xb0, Answer);
+offset_cmd_def!(QUERY_SCENE_LEVEL, 0xb0, 16, Answer);
 
 dev_cmd_def!(QUERY_GROUPS_0_7, 0xc0, Answer);
 dev_cmd_def!(QUERY_GROUPS_8_15, 0xc1, Answer);
@@ -148,6 +163,8 @@ dev_cmd_def!(QUERY_EXTENDED_VERSION_NUMBER, 0xff, Answer);
 
 special_cmd_def!(TERMINATE, 0xa1, 0x00);
 
+pub const INITIALISE_ADDRESS_BYTE: u8 = 0xa5;
+
 #[allow(non_snake_case)]
 #[inline(always)]
 pub fn INITIALISE_ADDR<A>(addr: A) -> Command<false, true>
@@ -156,7 +173,6 @@ where
 {
     Command([0xa5, addr.into().0])
 }
-
 special_cmd_def!(INITIALISE_ALL, 0xa5, 0x00, Twice);
 special_cmd_def!(INITIALISE_NO_ADDR, 0xa5, 0xff, Twice);
 special_cmd_def!(RANDOMISE, 0xa7, 0x00, Twice);
@@ -176,6 +192,7 @@ where
 {
     Command([0xb7, addr.into().0])
 }
+pub const PROGRAM_SHORT_ADDRESS_ADDRESS_BYTE: u8 = 0xb7;
 
 #[allow(non_snake_case)]
 #[inline(always)]

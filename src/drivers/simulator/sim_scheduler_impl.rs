@@ -158,7 +158,6 @@ impl SimulatorTask for SimulatorTaskImpl {
     /// All tasks must eventually wait, otherwise time may not
     /// progress
     fn wait_until(&self, when: Instant) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
-        println!("Task {} waiting until {:?}", self.task_index, when);
         let data = &mut self.data.data.write().unwrap();
         if let TaskState::None = data.task_states[self.task_index] {
             return Box::pin(future::ready(SimulatorEvent::Shutdown));
@@ -177,7 +176,6 @@ impl SimulatorTask for SimulatorTaskImpl {
     }
 
     fn wait(&self) -> Pin<Box<dyn Future<Output = SimulatorEvent> + Send>> {
-        println!("Task {} waiting", self.task_index);
         let mut data = self.data.data.write().unwrap();
         if let TaskState::None = data.task_states[self.task_index] {
             return Box::pin(future::ready(SimulatorEvent::Shutdown));

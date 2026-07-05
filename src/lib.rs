@@ -23,6 +23,8 @@ pub mod common;
 pub mod control;
 pub mod gear;
 
+pub mod simulator;
+
 #[cfg(feature = "httpd")]
 pub mod httpd;
 

@@ -6,13 +6,14 @@ use super::timing::{
 use crate::common::defs::MASK;
 use crate::drivers::driver::DaliBusEventType;
 use crate::drivers::send_flags::Flags;
-use crate::drivers::simulator::gear::rand::RngExt;
 use crate::gear::cmd_defs;
-use crate::gear::{device_type, fade, light_source, status};
+use crate::gear::{device_type, light_source, status};
 use linkme::distributed_slice;
 use log::debug;
-use std::future;
-use std::pin::Pin;
+use rand::RngExt;
+use std::convert::TryFrom;
+use std::ops::RangeBounds;
+use std::ops::Sub;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::time::Instant;
@@ -21,6 +22,12 @@ use tokio::task::JoinHandle;
 extern crate rand;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+fn boxed_err<E>(e: E) -> Box<dyn std::error::Error + Send + Sync>
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    Into::<Box<dyn std::error::Error + Send + Sync>>::into(e)
+}
 
 #[derive(PartialEq)]
 pub enum InitialisationState {
@@ -39,6 +46,7 @@ pub struct GearState {
     pub powered: bool,
 
     pub actual_level: u8,
+
     pub target_level: u8,
     pub last_active_level: u8,
     pub last_light_level: u8,
@@ -56,7 +64,7 @@ pub struct GearState {
     pub write_enable_state: WriteEnableState,
     pub status: u8,
     pub gear_groups: u16,
-    pub scene: [u8; 16],
+    pub scenes: [u8; 16],
     pub dtr0: u8,
     pub dtr1: u8,
     pub dtr2: u8,
@@ -88,7 +96,7 @@ impl DaliSimGear {
         let state = GearState {
             powered: true,
 
-            actual_level: 0xfe,
+            actual_level: 0x00,
             target_level: 0xfe,
             last_active_level: 0xfe,
             last_light_level: 0xfe,
@@ -106,18 +114,19 @@ impl DaliSimGear {
             write_enable_state: WriteEnableState::DISABLED,
             status: 0x00,
             gear_groups: 0x0000,
-            scene: [MASK; 16],
+            scenes: [MASK; 16],
             dtr0: 0,
             dtr1: 0,
             dtr2: 0,
             physical_minimum_level: phm,
 
+            // Scaled by 128
             fade_start_level: 0,
             // Scaled by 128
             fade_end_level: 0,
 
             fade_start_time: now,
-            fade_duration: Duration::new(0, 0),
+            fade_duration: Duration::from_secs(0),
             init_end_time: now + INIT_TIMEOUT,
         };
         DaliSimGear {
@@ -127,20 +136,19 @@ impl DaliSimGear {
     }
 }
 
-fn check_timers(dev: &mut GearState) {
+fn check_timers(dev: &mut GearState, now: Instant) {
     if dev.initialisation_state != InitialisationState::DISABLED {
-        if dev.init_end_time.elapsed() >= INIT_TIMEOUT {
+        if dev.init_end_time >= now {
             dev.initialisation_state = InitialisationState::DISABLED;
         }
     }
 
     if (dev.status & status::flag::FADE_RUNNING) != 0 {
-        let elapsed = dev.fade_start_time.elapsed();
-        if elapsed >= dev.fade_duration {
+        if now >= dev.fade_start_time + dev.fade_duration {
             dev.actual_level = dev.target_level;
             dev.status &= !status::flag::FADE_RUNNING;
         } else {
-            let elapsed_millis = elapsed.as_millis() as i128;
+            let elapsed_millis = (now - dev.fade_start_time).as_millis() as i128;
             let duration_millis = dev.fade_duration.as_millis() as i128;
             dev.actual_level = ((dev.fade_start_level
                 + (((dev.fade_end_level - dev.fade_start_level) as i128 * elapsed_millis
@@ -184,7 +192,7 @@ const FADE_MULTIPLIER: [Duration; 5] = [
     Duration::from_secs(60),
 ];
 
-fn start_fade_time(dev: &mut GearState) {
+fn start_fade_time(dev: &mut GearState, now: Instant) {
     if (dev.fade & 0xf0) == 0x00 && (dev.extended_fade_time & 0x70) == 0x00 {
         // No fade, change instantly
         dev.actual_level = dev.target_level;
@@ -206,7 +214,7 @@ fn start_fade_time(dev: &mut GearState) {
             dev.fade_duration = FADE_TIMES[dev.fade as usize >> 4];
         }
     }
-    dev.fade_start_time = Instant::now();
+    dev.fade_start_time = now;
     dev.fade_start_level = (dev.actual_level as i16) << 7;
     dev.fade_end_level = (dev.target_level as i16) << 7;
 }
@@ -248,7 +256,7 @@ fn yes_no(p: bool) -> Option<DaliBusEventType> {
 const YES_REPLY: Option<DaliBusEventType> = Some(DaliBusEventType::Frame8(MASK));
 const NO_REPLY: Option<DaliBusEventType> = None;
 
-fn device_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<DaliBusEventType> {
+fn query_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<DaliBusEventType> {
     match cmd {
         cmd_defs::QUERY_STATUS_OPCODE_BYTE => {
             update_status(dev);
@@ -274,6 +282,7 @@ fn device_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<
         cmd_defs::QUERY_VERSION_NUMBER_OPCODE_BYTE => {
             return Some(DaliBusEventType::Frame8(2 << 2 + 0)); // 2.0
         }
+        cmd_defs::QUERY_EXTENDED_VERSION_NUMBER_OPCODE_BYTE => return NO_REPLY,
         cmd_defs::QUERY_DEVICE_TYPE_OPCODE_BYTE => {
             return Some(DaliBusEventType::Frame8(device_type::types::LED));
         }
@@ -313,9 +322,12 @@ fn device_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<
             return Some(DaliBusEventType::Frame8(dev.system_failure_level));
         }
         cmd_defs::QUERY_FADE_OPCODE_BYTE => return Some(DaliBusEventType::Frame8(dev.fade)),
+        cmd_defs::QUERY_EXTENDED_FADE_TIME_OPCODE_BYTE => {
+            return Some(DaliBusEventType::Frame8(dev.extended_fade_time));
+        }
         cmd_defs::QUERY_SCENE_LEVEL_FIRST_OPCODE_BYTE
             ..=cmd_defs::QUERY_SCENE_LEVEL_LAST_OPCODE_BYTE => {
-            let level = dev.scene[(cmd - cmd_defs::QUERY_SCENE_LEVEL_FIRST_OPCODE_BYTE) as usize];
+            let level = dev.scenes[(cmd - cmd_defs::QUERY_SCENE_LEVEL_FIRST_OPCODE_BYTE) as usize];
             return Some(DaliBusEventType::Frame8(level));
         }
         cmd_defs::QUERY_GROUPS_0_7_OPCODE_BYTE => {
@@ -338,12 +350,136 @@ fn device_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<
             let addr = (dev.random_address & 0xff) as u8;
             return Some(DaliBusEventType::Frame8(addr));
         }
+
         _ => {}
     }
     None
 }
 
-fn special_cmd(dev: &mut GearState, cmd: u8, data: u8, flags: Flags) -> Option<DaliBusEventType> {
+fn set_target_level(dev: &mut GearState, level: u8, now: Instant) {
+    if level <= dev.min_level {
+        dev.target_level = dev.min_level;
+    } else if level >= dev.max_level {
+        dev.target_level = dev.max_level;
+    } else {
+        dev.target_level = level;
+    }
+    start_fade_time(dev, now);
+}
+fn level_cmd(_dev: &mut GearState, _addr: u8, _cmd: u8, _flags: Flags) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn goto_scene_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn set_scene_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn remove_from_scene_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+
+fn device_control_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn set_param_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn add_to_group_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn remove_from_group_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn memory_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+fn application_extended_cmd(
+    _dev: &mut GearState,
+    _addr: u8,
+    _cmd: u8,
+    _flags: Flags,
+) -> Option<DaliBusEventType> {
+    NO_REPLY
+}
+
+fn device_cmd(
+    dev: &mut GearState,
+    addr: u8,
+    cmd: u8,
+    flags: Flags,
+    now: Instant,
+) -> Option<DaliBusEventType> {
+    if (addr & 1) == 1 {
+        match cmd {
+            0x00..=0x0a => level_cmd(dev, addr, cmd, flags),
+            0x10..=0x1f => goto_scene_cmd(dev, addr, cmd, flags),
+            0x20..=0x25 => device_control_cmd(dev, addr, cmd, flags),
+            0x2a..=0x30 => set_param_cmd(dev, addr, cmd, flags),
+            0x40..=0x4f => set_scene_cmd(dev, addr, cmd, flags),
+            0x50..=0x5f => remove_from_scene_cmd(dev, addr, cmd, flags),
+            0x60..=0x6f => add_to_group_cmd(dev, addr, cmd, flags),
+            0x70..=0x7f => remove_from_group_cmd(dev, addr, cmd, flags),
+            0x80 => device_control_cmd(dev, addr, cmd, flags),
+            0x81 => memory_cmd(dev, addr, cmd, flags),
+            0x90..=0xc4 => query_cmd(dev, addr, cmd, flags),
+            0xc5 => memory_cmd(dev, addr, cmd, flags),
+            0xe0..=0xfe => application_extended_cmd(dev, addr, cmd, flags),
+            0xff => query_cmd(dev, addr, cmd, flags),
+            _ => None,
+        }
+    } else {
+        set_target_level(dev, cmd, now);
+        None
+    }
+}
+fn special_cmd(
+    dev: &mut GearState,
+    cmd: u8,
+    data: u8,
+    flags: Flags,
+    _now: Instant,
+) -> Option<DaliBusEventType> {
     //eprintln!("Special cmd: {:02x}", cmd);
     match cmd {
         cmd_defs::TERMINATE_ADDRESS_BYTE => {
@@ -356,7 +492,7 @@ fn special_cmd(dev: &mut GearState, cmd: u8, data: u8, flags: Flags) -> Option<D
                 || (data == cmd_defs::INITIALISE_NO_ADDR_OPCODE_BYTE && dev.short_address == MASK)
                 || data == cmd_defs::INITIALISE_ALL_OPCODE_BYTE
             {
-                println!("Initialised");
+                debug!("Initialised");
                 // TODO restart initialisation timer
                 dev.initialisation_state = InitialisationState::ENABLED;
             }
@@ -371,7 +507,7 @@ fn special_cmd(dev: &mut GearState, cmd: u8, data: u8, flags: Flags) -> Option<D
             NO_REPLY
         }
         cmd_defs::COMPARE_ADDRESS_BYTE => {
-            println!(
+            debug!(
                 "Comparing: 0x{:06x} <=  0x{:06x}",
                 dev.random_address, dev.search_address
             );
@@ -456,8 +592,129 @@ static DALI_SIMULATOR_DEVICE: DaliSimDeviceEntry = DaliSimDeviceEntry {
     init: device_init,
 };
 
+fn configure_variable_uint<T, R>(
+    conf: &yaml_serde::value::Mapping,
+    name: &str,
+    var: &mut T,
+    range: R,
+    offset: T,
+) -> DynResult<()>
+where
+    T: Copy + TryFrom<u64> + Sub<Output = T>,
+    R: RangeBounds<u64>,
+    <T as TryFrom<u64>>::Error: std::error::Error + Send + Sync + 'static,
+{
+    if let Some(value) = conf.get(name) {
+        let conf_value: u64 = value.as_u64().ok_or_else(|| {
+            boxed_err(format!("Value for '{}' is not an unsigned integer", name).as_str())
+        })?;
+        if !range.contains(&conf_value) {
+            return Err(boxed_err(format!("Value for '{}' is out of range", name)));
+        }
+        let var_value: T = conf_value.try_into()?;
+        *var = var_value - offset;
+    }
+    Ok(())
+}
+
 impl DaliSimDevice for DaliSimGear {
     fn configure(&mut self, conf: &yaml_serde::value::Mapping) -> DynResult<()> {
+        let mut state = self.state.write().unwrap();
+        configure_variable_uint(
+            conf,
+            "randomAddress",
+            &mut state.random_address,
+            0..=0xffffff,
+            0u32,
+        )?;
+        configure_variable_uint(conf, "shortAddress", &mut state.short_address, 1..64, 1)?;
+        configure_variable_uint(
+            conf,
+            "lastLightLevel",
+            &mut state.last_light_level,
+            0..=255,
+            0u8,
+        )?;
+        configure_variable_uint(conf, "powerOnLevel", &mut state.power_on_level, 0..255, 0)?;
+        configure_variable_uint(
+            conf,
+            "systemFailureLevel",
+            &mut state.system_failure_level,
+            0..=255,
+            0,
+        )?;
+        configure_variable_uint(conf, "minLevel", &mut state.min_level, 0..=255, 0)?;
+        configure_variable_uint(conf, "maxLevel", &mut state.max_level, 0..=255, 0)?;
+        if let Some(value) = conf.get("fadeRate").and_then(|v| v.as_u64()) {
+            state.fade = (state.fade & 0xf0) | (value as u8 & 0x0f);
+        }
+        if let Some(value) = conf.get("fadeTime").and_then(|v| v.as_u64()) {
+            state.fade = (state.fade & 0x0f) | (value as u8 & 0x0f) << 4;
+        }
+        if let Some(value) = conf.get("extendedFadeTimeBase").and_then(|v| v.as_u64()) {
+            state.extended_fade_time = (state.extended_fade_time & 0xf0) | (value as u8 & 0x0f);
+        }
+        if let Some(value) = conf
+            .get("extendedFadeTimeMultiplier")
+            .and_then(|v| v.as_u64())
+        {
+            state.extended_fade_time =
+                (state.extended_fade_time & 0x0f) | (value as u8 & 0x07) << 4;
+        }
+        match conf.get("gearGroups") {
+            Some(yaml_serde::Value::Sequence(groups)) => {
+                for group in groups {
+                    let bit = group
+                        .as_u64()
+                        .ok_or_else(|| boxed_err("Invalid group number"))?;
+                    if !(1..=16).contains(&bit) {
+                        return Err("Invalid group number".into());
+                    }
+                    state.gear_groups |= 1 << (bit - 1);
+                }
+            }
+            Some(yaml_serde::Value::Number(groups)) if let Some(g) = groups.as_u64() => {
+                state.gear_groups =
+                    u16::try_from(g).map_err(|e| format!("Illegal group bitmask: {}", e))?;
+            }
+            Some(_) => return Err("'gearGroups' must be a sequence or a number".into()),
+            None => {}
+        }
+        match conf.get("scenes") {
+            Some(yaml_serde::Value::Sequence(scenes)) => {
+                if scenes.len() > 16 {
+                    return Err("too many scenes".into());
+                }
+                for (index, level_val) in scenes.iter().enumerate() {
+                    let level = level_val
+                        .as_u64()
+                        .ok_or_else(|| boxed_err("Invalid level"))?;
+                    if !(0..=255).contains(&level) {
+                        return Err("Level out of range".into());
+                    }
+                    state.scenes[index] = level.try_into().map_err(|e| boxed_err(e))?;
+                }
+            }
+            Some(yaml_serde::Value::Mapping(scenes)) => {
+                for (index_val, level_val) in scenes.iter() {
+                    let index = index_val
+                        .as_u64()
+                        .ok_or_else(|| boxed_err("Invalid scene index"))?;
+                    if !(0..16).contains(&index) {
+                        return Err("Scene index out of range".into());
+                    }
+                    let level = level_val
+                        .as_u64()
+                        .ok_or_else(|| boxed_err("Invalid level"))?;
+                    if !(0..=255).contains(&level) {
+                        return Err("Level out of range".into());
+                    }
+                    state.scenes[index as usize] = level.try_into().map_err(|e| boxed_err(e))?;
+                }
+            }
+            Some(_) => return Err("'scenes' must be a sequence or a mapping".into()),
+            None => {}
+        }
         Ok(())
     }
 
@@ -506,22 +763,24 @@ async fn device_thread(bus: DaliSimBusDevice, state: Arc<RwLock<GearState>>) {
                     DaliBusEventType::Frame16(cmd) => {
                         let mut state = state.write().unwrap();
                         let short_address = state.short_address;
+                        let now = bus.current_time();
+                        check_timers(&mut state, now);
                         debug!(
                             "Gear {} received: {:02x} {:02x}",
                             short_address, cmd[0], cmd[1]
                         );
                         match cmd[0] >> 1 {
                             addr @ 0x00..=0x3f if addr == short_address => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
+                                device_cmd(&mut *state, cmd[0], cmd[1], flags, now)
                             }
                             addr @ 0x40..=0x4f if state.gear_groups & (1 << (addr & 0x0f)) != 0 => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
+                                device_cmd(&mut *state, cmd[0], cmd[1], flags, now)
                             }
                             0x7e if state.short_address == MASK => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
+                                device_cmd(&mut *state, cmd[0], cmd[1], flags, now)
                             }
-                            0x7f => device_cmd(&mut *state, cmd[0], cmd[1], flags),
-                            _ => special_cmd(&mut *state, cmd[0], cmd[1], flags),
+                            0x7f => device_cmd(&mut *state, cmd[0], cmd[1], flags, now),
+                            _ => special_cmd(&mut *state, cmd[0], cmd[1], flags, now),
                         }
                     }
                     _ => None,

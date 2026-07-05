@@ -1,8 +1,5 @@
-use crate::drivers::simulator::sim_bus::DaliSimBusDevice;
+use crate::simulator::sim_bus::DaliSimBusDevice;
 use linkme::distributed_slice;
-use std::future::Future;
-use std::pin::Pin;
-use std::time::{Duration, Instant};
 use yaml_serde::value::Mapping;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;

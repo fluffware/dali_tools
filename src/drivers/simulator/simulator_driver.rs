@@ -3,14 +3,13 @@ use crate::drivers::driver::{
     OpenError,
 };
 use crate::drivers::send_flags::Flags;
-use crate::drivers::simulator::device::{DALI_SIMULATOR_DEVICES, DaliSimDeviceEntry};
-use crate::drivers::simulator::sim_bus::{DaliSimBus, DaliSimBusDevice, DaliSimBusDeviceEvent};
-use crate::drivers::simulator::sim_scheduler::SimulatorScheduler;
-use crate::drivers::simulator::sim_scheduler_impl::SimulatorSchedulerImpl;
-use crate::drivers::simulator::timing;
 use crate::futures::FutureExt;
+use crate::simulator;
 use crate::utils::dyn_future::DynFuture;
-use log::{debug, warn};
+use log::debug;
+use simulator::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent};
+use simulator::sim_scheduler::SimulatorScheduler;
+use simulator::timing;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -40,6 +39,7 @@ impl fmt::Display for SimDriverError {
     }
 }
 
+/*
 async fn debug_task(device: DaliSimBusDevice) {
     let start_time = device.current_time();
     loop {
@@ -63,8 +63,10 @@ async fn debug_task(device: DaliSimBusDevice) {
         }
     }
 }
+*/
 
 pub struct DaliSimDriver {
+    #[allow(unused)]
     sched: Box<dyn SimulatorScheduler + Send>,
     bus_device: DaliSimBusDevice,
 }
@@ -72,9 +74,8 @@ pub struct DaliSimDriver {
 impl DaliSimDriver {
     pub fn new(
         bus_device: DaliSimBusDevice,
-        mut sched: Box<dyn SimulatorScheduler + Send>,
+        sched: Box<dyn SimulatorScheduler + Send>,
     ) -> DaliSimDriver {
-        let driver_task = sched.new_task();
         DaliSimDriver { sched, bus_device }
     }
 }
@@ -212,43 +213,11 @@ fn driver_open(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, O
             .into(),
         )
     })?;
-    let conf: yaml_serde::Mapping =
-        yaml_serde::from_reader(conf_file).map_err(|e| OpenError::DriverError(e.into()))?;
-    let Some(device_conf) = conf.get("devices") else {
-        return Err(OpenError::DriverError(
-            "No 'devices' tag found in configuration file".into(),
-        ));
-    };
-    let yaml_serde::Value::Sequence(device_list) = device_conf else {
-        return Err(OpenError::DriverError("'devices' is not a sequence".into()));
-    };
-    let mut sched = SimulatorSchedulerImpl::new();
-    let bus = DaliSimBus::new(sched.new_task());
-    for device in device_list {
-        let yaml_serde::Value::Mapping(conf) = device else {
-            return Err(OpenError::DriverError(
-                "Item in device list is not a mapping".into(),
-            ));
-        };
-        if let Some(device_type) = conf.get("type").and_then(|v| v.as_str()) {
-            debug!("Type: {}", device_type);
-            let Some(dev_entry) = DALI_SIMULATOR_DEVICES
-                .iter()
-                .position(|registered| registered.name == device_type)
-                .map(|p| &DALI_SIMULATOR_DEVICES[p])
-            else {
-                return Err(OpenError::DriverError(
-                    format!("Devivce type '{}' not available", device_type).into(),
-                ));
-            };
-            let mut device = (dev_entry.init)();
-            device.start(DaliSimBusDevice::new(bus.clone(), sched.new_task()));
-        } else {
-            warn!("Device configuration has no 'type' tag");
-        }
-    }
+    let (bus, mut sched) = simulator::setup::setup_simulator(conf_file)
+        .map_err(|e| OpenError::DriverError(e.into()))?;
+
     let bus_device = DaliSimBusDevice::new(bus, sched.new_task());
-    let driver = DaliSimDriver::new(bus_device, Box::new(sched));
+    let driver = DaliSimDriver::new(bus_device, sched);
     Ok(Box::new(driver))
 }
 

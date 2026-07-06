@@ -2,9 +2,29 @@ use clap::{Arg, Command};
 use dali::drivers::driver::OpenError;
 use dali::simulator;
 use dali_tools as dali;
+use dali_tools::simulator::sim_bus::DaliSimBusDevice;
+use futures::FutureExt;
 use log::debug;
+use log::error;
 use std::fs::File;
 use tokio::signal;
+use tokio_util::sync::CancellationToken;
+
+#[cfg(feature = "pty")]
+mod pty_serial;
+#[cfg(not(feature = "pty"))]
+mod pty_serial {
+    use dali_tools::simulator::sim_bus::DaliSimBusDevice;
+    use tokio_util::sync::CancellationToken;
+
+    pub async fn start_pty(
+        bus_device: DaliSimBusDevice,
+        cancel: CancellationToken,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        cancel.cancelled().await;
+        Ok(())
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -34,6 +54,29 @@ async fn main() {
             return;
         }
     };
-    signal::ctrl_c().await.expect("Failed to wait for Ctrl-C");
+    let cancel = CancellationToken::new();
+    let serial =
+        pty_serial::start_pty(DaliSimBusDevice::new(bus, sched.new_task()), cancel.clone()).fuse();
+    tokio::pin!(serial);
+    let ctrl_c = signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+    loop {
+        tokio::select! {
+                res = &mut serial => {
+            if let Err(e) = res {
+                error!("Serial pseudo port failed: {}",e);
+            }
+            break;
+            }
+                res = &mut ctrl_c => {
+            if let Err(_) = res {
+                error!("Failed to wait for Ctrl-C");
+            }
+            break;
+                }
+        }
+    }
+    cancel.cancel();
+    let _ = serial.await;
     debug!("Exiting");
 }

@@ -1,23 +1,23 @@
 use clap::{Arg, Command};
-use dali::drivers::driver::OpenError;
 use dali::simulator;
 use dali_tools as dali;
 use dali_tools::simulator::sim_bus::DaliSimBusDevice;
 use futures::FutureExt;
+use futures::future::FusedFuture;
 use log::debug;
 use log::error;
 use std::fs::File;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(feature = "pty")]
-mod pty_serial;
-#[cfg(not(feature = "pty"))]
-mod pty_serial {
+#[cfg(feature = "sim_serial")]
+mod sim_serial;
+#[cfg(not(feature = "sim_serial"))]
+mod sim_serial {
     use dali_tools::simulator::sim_bus::DaliSimBusDevice;
     use tokio_util::sync::CancellationToken;
 
-    pub async fn start_pty(
+    pub async fn start_serial(
         bus_device: DaliSimBusDevice,
         cancel: CancellationToken,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -34,7 +34,13 @@ async fn main() {
     }
     let mut cli_cmd = Command::new("dali_simulator")
         .about("Simulate DALI-devices on a bus ")
-        .arg(Arg::new("CONFIG").required(true).help("Configuration file"));
+        .arg(Arg::new("CONFIG").required(true).help("Configuration file"))
+        .arg(
+            Arg::new("SERIAL_DEVICE")
+                .long("serial-device")
+                .default_value("/dev/tnt0")
+                .help("Serial device for simulation"),
+        );
     let matches = cli_cmd.get_matches();
     let conf_filename = matches.get_one::<String>("CONFIG").unwrap();
     let conf_file = match File::open(conf_filename) {
@@ -54,9 +60,14 @@ async fn main() {
             return;
         }
     };
+    let serial_path = matches.get_one::<String>("SERIAL_DEVICE").unwrap();
     let cancel = CancellationToken::new();
-    let serial =
-        pty_serial::start_pty(DaliSimBusDevice::new(bus, sched.new_task()), cancel.clone()).fuse();
+    let serial = sim_serial::start_serial(
+        DaliSimBusDevice::new(bus, sched.new_task()),
+        &serial_path,
+        cancel.clone(),
+    )
+    .fuse();
     tokio::pin!(serial);
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
@@ -77,6 +88,9 @@ async fn main() {
         }
     }
     cancel.cancel();
-    let _ = serial.await;
+    debug!("Cancelled");
+    if !serial.is_terminated() {
+        let _ = serial.await;
+    }
     debug!("Exiting");
 }

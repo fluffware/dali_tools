@@ -1,8 +1,11 @@
 use super::sim_scheduler::{SimulatorEvent, SimulatorMessageDest, SimulatorTask, SimulatorTaskId};
-use crate::drivers::driver::DaliBusEventType;
+use crate::drivers::driver::{DaliBusEventType, DaliFrame, DaliSendResult};
+use crate::drivers::send_flags::Flags;
+use crate::simulator::timing;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 pub struct DaliSimBusEvent {
@@ -185,6 +188,107 @@ impl DaliSimBusDevice {
                 SimulatorEvent::Shutdown => return DaliSimBusDeviceEvent::Shutdown,
             }
         }
+    }
+
+    pub fn send_frame<'a>(
+        &'a mut self,
+        cmd: DaliFrame,
+        flags: Flags,
+    ) -> Pin<Box<dyn Future<Output = DaliSendResult> + Send + 'a>> {
+        Box::pin(async move {
+            let mut frame_start = self.current_time() + timing::send_delay(flags.priority(), false);
+            loop {
+                match self.wait_until(frame_start).await {
+                    DaliSimBusDeviceEvent::Timeout => {
+                        break;
+                    }
+                    DaliSimBusDeviceEvent::Message(bus_event) => {
+                        frame_start =
+                            bus_event.timestamp + timing::send_delay(flags.priority(), false);
+                    }
+                    DaliSimBusDeviceEvent::Shutdown => {
+                        return DaliSendResult::DriverError("Shutdown".into());
+                    }
+                }
+            }
+            let mut frame_end = frame_start + timing::frame_duration(&cmd);
+
+            self.add_event(
+                DaliBusEventType::from(cmd.clone()),
+                frame_end,
+                Some(frame_start),
+            );
+            match self.wait_until(frame_end).await {
+                DaliSimBusDeviceEvent::Timeout => {}
+                DaliSimBusDeviceEvent::Message(_bus_event) => {
+                    return DaliSendResult::Framing;
+                }
+                DaliSimBusDeviceEvent::Shutdown => {
+                    return DaliSendResult::DriverError("Shutdown".into());
+                }
+            }
+            if flags.send_twice() {
+                let frame_start = self.current_time() + Duration::from_micros(13500);
+                frame_end = frame_start + timing::frame_duration(&cmd);
+                match self.wait_until(frame_start).await {
+                    DaliSimBusDeviceEvent::Timeout => {}
+                    DaliSimBusDeviceEvent::Message(_msg) => {
+                        return DaliSendResult::Framing;
+                    }
+                    DaliSimBusDeviceEvent::Shutdown => {
+                        return DaliSendResult::DriverError("Shutdown".into());
+                    }
+                }
+
+                self.add_event(
+                    DaliBusEventType::from(cmd.clone()),
+                    frame_end,
+                    Some(frame_start),
+                );
+            }
+            match self.wait_until(frame_end).await {
+                DaliSimBusDeviceEvent::Timeout => {}
+                DaliSimBusDeviceEvent::Message(_msg) => {
+                    return DaliSendResult::Framing;
+                }
+                DaliSimBusDeviceEvent::Shutdown => {
+                    return DaliSendResult::DriverError("Shutdown".into());
+                }
+            }
+
+            if flags.expect_answer() {
+                match self
+                    .wait_until(self.current_time() + Duration::from_millis(50))
+                    .await
+                {
+                    DaliSimBusDeviceEvent::Timeout => return DaliSendResult::Timeout,
+                    DaliSimBusDeviceEvent::Message(bus_event) => {
+                        if let DaliBusEventType::Frame8(data) = bus_event.event_type {
+                            return DaliSendResult::Answer(data);
+                        } else {
+                            return DaliSendResult::Framing;
+                        }
+                    }
+
+                    DaliSimBusDeviceEvent::Shutdown => {
+                        return DaliSendResult::DriverError("Shutdown".into());
+                    }
+                }
+            } else {
+                match self
+                    .wait_until(self.current_time() + timing::STOP_CONDITION)
+                    .await
+                {
+                    DaliSimBusDeviceEvent::Timeout => return DaliSendResult::Ok,
+                    DaliSimBusDeviceEvent::Message(_bus_event) => {
+                        return DaliSendResult::Framing;
+                    }
+                    DaliSimBusDeviceEvent::Shutdown => {
+                        return DaliSendResult::DriverError("Shutdown".into());
+                    }
+                }
+            }
+        })
     }
 }
 

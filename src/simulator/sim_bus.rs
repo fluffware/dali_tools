@@ -2,6 +2,7 @@ use super::sim_scheduler::{SimulatorEvent, SimulatorMessageDest, SimulatorTask, 
 use crate::drivers::driver::{DaliBusEventType, DaliFrame, DaliSendResult};
 use crate::drivers::send_flags::Flags;
 use crate::simulator::timing;
+use log::debug;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -261,7 +262,10 @@ impl DaliSimBusDevice {
                     .wait_until(self.current_time() + Duration::from_millis(50))
                     .await
                 {
-                    DaliSimBusDeviceEvent::Timeout => return DaliSendResult::Timeout,
+                    DaliSimBusDeviceEvent::Timeout => {
+                        debug!("Bus answer timeout");
+                        return DaliSendResult::Timeout;
+                    }
                     DaliSimBusDeviceEvent::Message(bus_event) => {
                         if let DaliBusEventType::Frame8(data) = bus_event.event_type {
                             return DaliSendResult::Answer(data);
@@ -297,10 +301,10 @@ mod test {
     use super::DaliBusEventType;
     use super::DaliSimBus;
     use super::DaliSimBusEvent;
-    use crate::drivers::simulator::sim_scheduler::SimulatorEvent;
-    use crate::drivers::simulator::sim_scheduler::SimulatorScheduler;
-    use crate::drivers::simulator::sim_scheduler::SimulatorTask;
-    use crate::drivers::simulator::sim_scheduler_impl::SimulatorSchedulerImpl;
+    use crate::simulator::sim_scheduler::SimulatorEvent;
+    use crate::simulator::sim_scheduler::SimulatorScheduler;
+    use crate::simulator::sim_scheduler::SimulatorTask;
+    use crate::simulator::sim_scheduler_impl::SimulatorSchedulerImpl;
     use std::assert_matches;
     use std::sync::Arc;
     use std::time::{Duration, Instant};

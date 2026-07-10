@@ -91,7 +91,7 @@ dev_cmd_def!(RECALL_MIN_LEVEL, 0x06);
 dev_cmd_def!(STEP_DOWN_AND_OFF, 0x07);
 dev_cmd_def!(ON_AND_STEP_UP, 0x08);
 
-dev_cmd_def!(ENABLE_DAPC, 0x09);
+dev_cmd_def!(ENABLE_DAPC_SEQUENCE, 0x09);
 dev_cmd_def!(GO_TO_LAST_ACTIVE_LEVEL, 0x0a);
 
 offset_cmd_def!(GOTO_SCENE, 0x10, 16);

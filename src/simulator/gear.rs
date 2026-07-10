@@ -11,6 +11,7 @@ use crate::gear::{device_type, light_source, status};
 use linkme::distributed_slice;
 use log::debug;
 use rand::RngExt;
+use std::cmp::{max, min};
 use std::convert::TryFrom;
 use std::ops::RangeBounds;
 use std::ops::Sub;
@@ -45,8 +46,6 @@ pub enum WriteEnableState {
 pub struct GearState {
     pub powered: bool,
 
-    pub actual_level: u8,
-
     pub target_level: u8,
     pub last_active_level: u8,
     pub last_light_level: u8,
@@ -70,33 +69,25 @@ pub struct GearState {
     pub dtr2: u8,
     pub physical_minimum_level: u8,
 
-    // Fade endpoints. Scaled for better precision.
-    // Scaled by 128
-    fade_start_level: i16,
-    // Scaled by 128
-    fade_end_level: i16,
+    // Slope of actualLevel towards targetLevel, in steps/ms
+    fade_slope: i32, // Fixed point, slope*(1<<29)
+    fade_end_time: Instant,
 
-    // Timers
-    fade_start_time: Instant,
-    fade_duration: Duration,
+    // Init timer
     init_end_time: Instant,
+
+    current_time: Instant, // Time for evaluating, timers, fades, etc.
 }
 
-#[allow(dead_code)]
-pub struct DaliSimGear {
-    state: Arc<RwLock<GearState>>,
-    thread: Option<JoinHandle<()>>,
-}
+const FADE_SLOPE_SHIFT: i32 = 29;
+const FADE_HIRES_SHIFT: i32 = 7;
 
-impl DaliSimGear {
-    pub fn new() -> DaliSimGear {
-        let mut rng = rand::rng();
+impl GearState {
+    pub fn new(random_address: u32, now: Instant) -> GearState {
         let phm = 0x01;
-        let now = Instant::now();
-        let state = GearState {
+        GearState {
             powered: true,
 
-            actual_level: 0x00,
             target_level: 0xfe,
             last_active_level: 0xfe,
             last_light_level: 0xfe,
@@ -108,7 +99,7 @@ impl DaliSimGear {
             extended_fade_time: 0x00,
             short_address: MASK,
             search_address: 0xffffff,
-            random_address: rng.random_range(0..0x1000000),
+            random_address,
             operating_mode: 0,
             initialisation_state: InitialisationState::DISABLED,
             write_enable_state: WriteEnableState::DISABLED,
@@ -120,15 +111,88 @@ impl DaliSimGear {
             dtr2: 0,
             physical_minimum_level: phm,
 
-            // Scaled by 128
-            fade_start_level: 0,
-            // Scaled by 128
-            fade_end_level: 0,
+            fade_slope: 0,
+            fade_end_time: now,
 
-            fade_start_time: now,
-            fade_duration: Duration::from_secs(0),
             init_end_time: now + INIT_TIMEOUT,
-        };
+
+            current_time: now,
+        }
+    }
+
+    // Can return negative value due to rounding errors
+    pub fn actual_level_hires_at(&self, time: Instant) -> i16 {
+        if self.status & status::flag::FADE_RUNNING != 0 {
+            if time > self.fade_end_time {
+                i16::from(self.target_level) << 7
+            } else {
+                let millis_left = (self.fade_end_time - time).as_millis() as i64;
+                println!(
+                    "target: {}, slope: {}, left: {}",
+                    self.target_level, self.fade_slope, millis_left
+                );
+                dbg!(i16::try_from(
+                    ((self.target_level as i64) << FADE_HIRES_SHIFT)
+                        - (self.fade_slope as i64 * millis_left
+                            + (1 << (FADE_SLOPE_SHIFT - FADE_HIRES_SHIFT - 1))
+                            >> (FADE_SLOPE_SHIFT - FADE_HIRES_SHIFT))
+                ),)
+                .unwrap()
+            }
+        } else {
+            i16::from(self.target_level) << 7
+        }
+    }
+    pub fn actual_level_at(&self, time: Instant) -> u8 {
+        ((self.actual_level_hires_at(time) + 64) >> 7) as u8
+    }
+    pub fn actual_level(&self) -> u8 {
+        self.actual_level_at(self.current_time)
+    }
+
+    /// Immediately change actual_level and target_level
+    pub fn set_actual_level(&mut self, level: u8) {
+        self.status &= !status::flag::FADE_RUNNING;
+        self.target_level = level;
+    }
+
+    pub fn reset(&mut self) {
+        self.target_level = 0xfe;
+        self.last_active_level = 0xfe;
+        self.last_light_level = 0xfe;
+        self.power_on_level = 0xfe;
+        self.system_failure_level = 0xfe;
+        self.min_level = self.physical_minimum_level;
+        self.max_level = 0xfe;
+        self.fade = 0x07;
+        self.extended_fade_time = 0x00;
+        self.search_address = 0xffffff;
+        self.random_address = 0xffffff;
+        self.write_enable_state = WriteEnableState::DISABLED;
+        self.status &=
+            !(status::flag::LIMIT_ERROR | status::flag::FADE_RUNNING | status::flag::POWER_CYCLE);
+        self.status |= status::flag::RESET_STATE;
+
+        self.gear_groups = 0x0000;
+        self.scenes = [MASK; 16];
+        self.dtr0 = 0;
+        self.dtr1 = 0;
+        self.dtr2 = 0;
+    }
+}
+
+#[allow(dead_code)]
+pub struct DaliSimGear {
+    state: Arc<RwLock<GearState>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl DaliSimGear {
+    pub fn new() -> DaliSimGear {
+        let mut rng = rand::rng();
+        let now = Instant::now();
+        let state = GearState::new(rng.random_range(0..0x1000000), now);
+
         DaliSimGear {
             state: Arc::new(RwLock::new(state)),
             thread: None,
@@ -136,25 +200,17 @@ impl DaliSimGear {
     }
 }
 
-fn check_timers(dev: &mut GearState, now: Instant) {
+fn check_timers(dev: &mut GearState) {
+    let now = dev.current_time;
     if dev.initialisation_state != InitialisationState::DISABLED {
-        if dev.init_end_time >= now {
+        if dev.init_end_time <= now {
             dev.initialisation_state = InitialisationState::DISABLED;
         }
     }
 
     if (dev.status & status::flag::FADE_RUNNING) != 0 {
-        if now >= dev.fade_start_time + dev.fade_duration {
-            dev.actual_level = dev.target_level;
+        if now >= dev.fade_end_time {
             dev.status &= !status::flag::FADE_RUNNING;
-        } else {
-            let elapsed_millis = (now - dev.fade_start_time).as_millis() as i128;
-            let duration_millis = dev.fade_duration.as_millis() as i128;
-            dev.actual_level = ((dev.fade_start_level
-                + (((dev.fade_end_level - dev.fade_start_level) as i128 * elapsed_millis
-                    + duration_millis / 2)
-                    / duration_millis) as i16)
-                >> 7) as u8;
         }
     }
 }
@@ -192,31 +248,48 @@ const FADE_MULTIPLIER: [Duration; 5] = [
     Duration::from_secs(60),
 ];
 
-fn start_fade_time(dev: &mut GearState, now: Instant) {
-    if (dev.fade & 0xf0) == 0x00 && (dev.extended_fade_time & 0x70) == 0x00 {
-        // No fade, change instantly
-        dev.actual_level = dev.target_level;
-        return;
-    } else {
-        if (dev.fade & 0xf0) == 0x0 {
-            // Use extended fade times
-            if dev.extended_fade_time == 0 || dev.extended_fade_time > 0x4f {
-                // Extended fade is zero
-                dev.actual_level = dev.target_level;
-                return;
-            } else {
-                // Extended fade time
-                dev.fade_duration = FADE_MULTIPLIER[dev.extended_fade_time as usize >> 4]
-                    * ((dev.extended_fade_time & 0x0f) + 1) as u32;
-            }
+fn start_fade(dev: &mut GearState, new_target_level: u8, now: Instant, fade_duration: Duration) {
+    // Calulate actual position shifted up by FADE_SLOPE_SHIFT
+    let actual_level = if dev.status & status::flag::FADE_RUNNING != 0 {
+        if now > dev.fade_end_time {
+            i64::from(dev.target_level) << FADE_SLOPE_SHIFT
         } else {
-            // Basic fadetime
-            dev.fade_duration = FADE_TIMES[dev.fade as usize >> 4];
+            let millis_left = (dev.fade_end_time - now).as_millis() as i64;
+            ((dev.target_level as i64) << FADE_SLOPE_SHIFT) - (dev.fade_slope as i64) * millis_left
         }
-    }
-    dev.fade_start_time = now;
-    dev.fade_start_level = (dev.actual_level as i16) << 7;
-    dev.fade_end_level = (dev.target_level as i16) << 7;
+    } else {
+        i64::from(dev.target_level) << FADE_SLOPE_SHIFT
+    };
+
+    let duration = fade_duration.as_millis() as i64;
+    dev.fade_slope = i32::try_from(
+        (((new_target_level as i64) << FADE_SLOPE_SHIFT) - actual_level + duration / 2) / duration,
+    )
+    .unwrap();
+    dev.fade_end_time = now + fade_duration;
+    dev.target_level = new_target_level;
+    dev.status |= status::flag::FADE_RUNNING;
+}
+
+fn start_fade_time(dev: &mut GearState, new_target_level: u8) {
+    let now = dev.current_time;
+
+    let fade_duration = if (dev.fade & 0xf0) == 0x0 {
+        // Use extended fade times
+        if (dev.extended_fade_time & 0x70) == 0 || dev.extended_fade_time > 0x4f {
+            // Extended fade is zero
+            dev.set_actual_level(dev.target_level);
+            return;
+        } else {
+            // Extended fade time
+            FADE_MULTIPLIER[dev.extended_fade_time as usize >> 4]
+                * ((dev.extended_fade_time & 0x0f) + 1) as u32
+        }
+    } else {
+        // Basic fadetime
+        FADE_TIMES[dev.fade as usize >> 4]
+    };
+    start_fade(dev, new_target_level, now, fade_duration);
 }
 
 fn query_status_flag(dev: &GearState, flag: u8) -> Option<DaliBusEventType> {
@@ -237,7 +310,7 @@ pub const STORED_STATUS_FLAGS: u8 = status::flag::GEAR_FAILURE
 
 fn update_status(dev: &mut GearState) {
     dev.status = (dev.status & STORED_STATUS_FLAGS)
-        | if dev.actual_level > 0 {
+        | if dev.actual_level() > 0 {
             status::flag::LAMP_ON
         } else {
             0
@@ -269,7 +342,7 @@ fn query_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<D
         cmd_defs::QUERY_LAMP_FAILURE_OPCODE_BYTE => {
             return query_status_flag(&dev, status::flag::LAMP_FAILURE);
         }
-        cmd_defs::QUERY_LAMP_POWER_ON_OPCODE_BYTE => return yes_no(dev.actual_level > 0),
+        cmd_defs::QUERY_LAMP_POWER_ON_OPCODE_BYTE => return yes_no(dev.actual_level() > 0),
         cmd_defs::QUERY_LIMIT_ERROR_OPCODE_BYTE => {
             return query_status_flag(&dev, status::flag::LIMIT_ERROR);
         }
@@ -307,7 +380,7 @@ fn query_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<D
             return Some(DaliBusEventType::Frame8(light_source::LED));
         }
         cmd_defs::QUERY_ACTUAL_LEVEL_OPCODE_BYTE => {
-            return Some(DaliBusEventType::Frame8(dev.actual_level));
+            return Some(DaliBusEventType::Frame8(dev.actual_level()));
         }
         cmd_defs::QUERY_MAX_LEVEL_OPCODE_BYTE => {
             return Some(DaliBusEventType::Frame8(dev.max_level));
@@ -356,17 +429,58 @@ fn query_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<D
     None
 }
 
-fn set_target_level(dev: &mut GearState, level: u8, now: Instant) {
-    if level <= dev.min_level {
-        dev.target_level = dev.min_level;
+fn set_target_level(dev: &mut GearState, level: u8) {
+    let new_target = if level <= dev.min_level {
+        dev.min_level
     } else if level >= dev.max_level {
-        dev.target_level = dev.max_level;
+        dev.max_level
     } else {
-        dev.target_level = level;
-    }
-    start_fade_time(dev, now);
+        level
+    };
+    start_fade_time(dev, new_target);
 }
-fn level_cmd(_dev: &mut GearState, _addr: u8, _cmd: u8, _flags: Flags) -> Option<DaliBusEventType> {
+fn level_cmd(dev: &mut GearState, cmd: u8, _flags: Flags) -> Option<DaliBusEventType> {
+    match cmd {
+        cmd_defs::OFF_OPCODE_BYTE => {
+            set_target_level(dev, 0);
+        }
+        cmd_defs::UP_OPCODE_BYTE => {
+            todo!()
+        }
+        cmd_defs::DOWN_OPCODE_BYTE => {
+            todo!()
+        }
+        cmd_defs::STEP_UP_OPCODE_BYTE => {
+            todo!()
+        }
+        cmd_defs::STEP_DOWN_OPCODE_BYTE => {
+            todo!()
+        }
+        cmd_defs::RECALL_MAX_LEVEL_OPCODE_BYTE => {
+            if dev.initialisation_state == InitialisationState::DISABLED {
+                start_fade_time(dev, dev.max_level);
+            } else {
+                todo!();
+            }
+        }
+        cmd_defs::RECALL_MIN_LEVEL_OPCODE_BYTE => {
+            if dev.initialisation_state == InitialisationState::DISABLED {
+                start_fade_time(dev, dev.max_level);
+            } else {
+                todo!();
+            }
+        }
+        cmd_defs::STEP_DOWN_AND_OFF_OPCODE_BYTE => {
+            todo!()
+        }
+        cmd_defs::ON_AND_STEP_UP_OPCODE_BYTE => {
+            todo!()
+        }
+        cmd_defs::ENABLE_DAPC_SEQUENCE_OPCODE_BYTE => {
+            todo!()
+        }
+        _ => {}
+    }
     NO_REPLY
 }
 fn goto_scene_cmd(
@@ -394,21 +508,111 @@ fn remove_from_scene_cmd(
     NO_REPLY
 }
 
-fn device_control_cmd(
-    _dev: &mut GearState,
-    _addr: u8,
-    _cmd: u8,
-    _flags: Flags,
-) -> Option<DaliBusEventType> {
+fn device_control_cmd(dev: &mut GearState, cmd: u8, flags: Flags) -> Option<DaliBusEventType> {
+    if flags.send_twice() {
+        match cmd {
+            cmd_defs::RESET_OPCODE_BYTE => {
+                dev.reset();
+            }
+            cmd_defs::STORE_ACTUAL_LEVEL_IN_DTR0_OPCODE_BYTE => {
+                dev.dtr0 = dev.actual_level();
+            }
+            cmd_defs::SAVE_PERSISTENT_VARIABLES_OPCODE_BYTE => {
+                // NOP
+            }
+            cmd_defs::SET_OPERATING_MODE_OPCODE_BYTE => {
+                // NOP
+            }
+            cmd_defs::RESET_MEMORY_BANK_OPCODE_BYTE => {
+                todo! {}
+            }
+            cmd_defs::IDENTIFY_DEVICE_OPCODE_BYTE => {
+                todo! {}
+            }
+
+            cmd_defs::SET_SHORT_ADDRESS_OPCODE_BYTE => {
+                dev.short_address = dev.dtr0;
+            }
+            _ => {}
+        }
+    }
     NO_REPLY
 }
-fn set_param_cmd(
-    _dev: &mut GearState,
-    _addr: u8,
-    _cmd: u8,
-    _flags: Flags,
-) -> Option<DaliBusEventType> {
-    NO_REPLY
+fn set_param_cmd(dev: &mut GearState, cmd: u8, flags: Flags) -> Option<DaliBusEventType> {
+    if flags.send_twice() {
+        match cmd {
+            cmd_defs::SET_MAX_LEVEL_OPCODE_BYTE => {
+                // 11.4.8
+                dev.max_level = if dev.min_level > dev.dtr0 {
+                    dev.min_level
+                } else if dev.dtr0 == MASK {
+                    0xfe
+                } else {
+                    dev.dtr0
+                };
+                if dev.actual_level() > dev.max_level {
+                    dev.target_level = dev.max_level;
+                    dev.set_actual_level(dev.target_level);
+                } else if dev.target_level > dev.max_level && dev.fade_end_time > dev.current_time {
+                    start_fade(
+                        dev,
+                        dev.max_level,
+                        dev.current_time,
+                        dev.fade_end_time - dev.current_time,
+                    );
+                }
+                None
+            }
+            cmd_defs::SET_MIN_LEVEL_OPCODE_BYTE => {
+                // 11.4.9
+                dev.min_level = if dev.dtr0 <= dev.physical_minimum_level {
+                    dev.physical_minimum_level
+                } else if dev.max_level < dev.dtr0 || dev.dtr0 == MASK {
+                    dev.max_level
+                } else {
+                    dev.dtr0
+                };
+                let actual_level = dev.actual_level();
+                if actual_level > 0 && actual_level < dev.min_level {
+                    dev.target_level = dev.max_level;
+                    dev.set_actual_level(dev.target_level);
+                } else if dev.target_level < dev.min_level && dev.fade_end_time > dev.current_time {
+                    start_fade(
+                        dev,
+                        dev.min_level,
+                        dev.current_time,
+                        dev.fade_end_time - dev.current_time,
+                    );
+                }
+                None
+            }
+            cmd_defs::SET_SYSTEM_FAILURE_LEVEL_OPCODE_BYTE => {
+                dev.system_failure_level = dev.dtr0;
+                None
+            }
+            cmd_defs::SET_POWER_ON_LEVEL_OPCODE_BYTE => {
+                dev.power_on_level = dev.dtr0;
+                None
+            }
+            cmd_defs::SET_FADE_TIME_OPCODE_BYTE => {
+                let fade_time = min(dev.dtr0, 15);
+                dev.fade = (dev.fade & 0x0f) | (fade_time << 4);
+                None
+            }
+            cmd_defs::SET_FADE_RATE_OPCODE_BYTE => {
+                let fade_rate = max(1, min(dev.dtr0, 15));
+                dev.fade = (dev.fade & 0xf0) | fade_rate;
+                None
+            }
+            cmd_defs::SET_EXTENDED_FADE_TIME_OPCODE_BYTE => {
+                dev.extended_fade_time = if dev.dtr0 > 0x4f { 0 } else { dev.dtr0 };
+                None
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
 }
 fn add_to_group_cmd(
     _dev: &mut GearState,
@@ -443,24 +647,18 @@ fn application_extended_cmd(
     NO_REPLY
 }
 
-fn device_cmd(
-    dev: &mut GearState,
-    addr: u8,
-    cmd: u8,
-    flags: Flags,
-    now: Instant,
-) -> Option<DaliBusEventType> {
+fn device_cmd(dev: &mut GearState, addr: u8, cmd: u8, flags: Flags) -> Option<DaliBusEventType> {
     if (addr & 1) == 1 {
         match cmd {
-            0x00..=0x0a => level_cmd(dev, addr, cmd, flags),
+            0x00..=0x0a => level_cmd(dev, cmd, flags),
             0x10..=0x1f => goto_scene_cmd(dev, addr, cmd, flags),
-            0x20..=0x25 => device_control_cmd(dev, addr, cmd, flags),
-            0x2a..=0x30 => set_param_cmd(dev, addr, cmd, flags),
+            0x20..=0x25 => device_control_cmd(dev, cmd, flags),
+            0x2a..=0x30 => set_param_cmd(dev, cmd, flags),
             0x40..=0x4f => set_scene_cmd(dev, addr, cmd, flags),
             0x50..=0x5f => remove_from_scene_cmd(dev, addr, cmd, flags),
             0x60..=0x6f => add_to_group_cmd(dev, addr, cmd, flags),
             0x70..=0x7f => remove_from_group_cmd(dev, addr, cmd, flags),
-            0x80 => device_control_cmd(dev, addr, cmd, flags),
+            0x80 => device_control_cmd(dev, cmd, flags),
             0x81 => memory_cmd(dev, addr, cmd, flags),
             0x90..=0xc4 => query_cmd(dev, addr, cmd, flags),
             0xc5 => memory_cmd(dev, addr, cmd, flags),
@@ -469,22 +667,15 @@ fn device_cmd(
             _ => None,
         }
     } else {
-        set_target_level(dev, cmd, now);
+        start_fade_time(dev, cmd);
         None
     }
 }
-fn special_cmd(
-    dev: &mut GearState,
-    cmd: u8,
-    data: u8,
-    flags: Flags,
-    _now: Instant,
-) -> Option<DaliBusEventType> {
+fn special_cmd(dev: &mut GearState, cmd: u8, data: u8, flags: Flags) -> Option<DaliBusEventType> {
     //eprintln!("Special cmd: {:02x}", cmd);
     match cmd {
         cmd_defs::TERMINATE_ADDRESS_BYTE => {
             dev.initialisation_state = InitialisationState::DISABLED;
-            // TODO stop identification
             NO_REPLY
         }
         cmd_defs::INITIALISE_ADDRESS_BYTE if flags.send_twice() => {
@@ -493,7 +684,7 @@ fn special_cmd(
                 || data == cmd_defs::INITIALISE_ALL_OPCODE_BYTE
             {
                 debug!("Initialised");
-                // TODO restart initialisation timer
+                dev.init_end_time = dev.current_time + INIT_TIMEOUT;
                 dev.initialisation_state = InitialisationState::ENABLED;
             }
 
@@ -514,6 +705,7 @@ fn special_cmd(
             if dev.initialisation_state == InitialisationState::ENABLED
                 && dev.random_address <= dev.search_address
             {
+                debug!("Compare success");
                 YES_REPLY
             } else {
                 NO_REPLY
@@ -719,6 +911,7 @@ impl DaliSimDevice for DaliSimGear {
     }
 
     fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()> {
+        self.state.write().unwrap().init_end_time = bus_device.current_time() + INIT_TIMEOUT;
         self.thread = Some(tokio::spawn(device_thread(bus_device, self.state.clone())));
         Ok(())
     }
@@ -763,24 +956,24 @@ async fn device_thread(bus: DaliSimBusDevice, state: Arc<RwLock<GearState>>) {
                     DaliBusEventType::Frame16(cmd) => {
                         let mut state = state.write().unwrap();
                         let short_address = state.short_address;
-                        let now = bus.current_time();
-                        check_timers(&mut state, now);
+                        state.current_time = bus.current_time();
+                        check_timers(&mut state);
                         debug!(
                             "Gear {} received: {:02x} {:02x}",
                             short_address, cmd[0], cmd[1]
                         );
                         match cmd[0] >> 1 {
                             addr @ 0x00..=0x3f if addr == short_address => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags, now)
+                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
                             }
                             addr @ 0x40..=0x4f if state.gear_groups & (1 << (addr & 0x0f)) != 0 => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags, now)
+                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
                             }
                             0x7e if state.short_address == MASK => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags, now)
+                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
                             }
-                            0x7f => device_cmd(&mut *state, cmd[0], cmd[1], flags, now),
-                            _ => special_cmd(&mut *state, cmd[0], cmd[1], flags, now),
+                            0x7f => device_cmd(&mut *state, cmd[0], cmd[1], flags),
+                            _ => special_cmd(&mut *state, cmd[0], cmd[1], flags),
                         }
                     }
                     _ => None,
@@ -796,4 +989,35 @@ async fn device_thread(bus: DaliSimBusDevice, state: Arc<RwLock<GearState>>) {
             }
         }
     }
+}
+#[cfg(test)]
+fn check_fade(state: &mut GearState, target_level: u8, now: Instant, duration: Duration) {
+    let start_level = state.actual_level_hires_at(now);
+    start_fade(state, target_level, now, duration);
+    // Allow a differece due to rounding
+    if (state.actual_level_hires_at(now) - start_level).abs() > 1 {
+        panic!("{} != {}", state.actual_level_hires_at(now), start_level);
+    }
+    // End of fade should always be exact
+    assert_eq!(
+        state.actual_level_hires_at(now + duration),
+        i16::from(target_level) << 7
+    );
+}
+
+#[test]
+fn test_fade() {
+    let mut now = Instant::now();
+    let mut state = GearState::new(0xffffff, now);
+    state.target_level = 78;
+    check_fade(&mut state, 254, now, Duration::from_millis(100));
+
+    now += Duration::from_millis(43);
+    check_fade(&mut state, 0, now, Duration::from_secs(15 * 60));
+
+    now += Duration::from_secs(15 * 60);
+    check_fade(&mut state, 254, now, Duration::from_secs(15 * 60));
+
+    now += Duration::from_secs(14 * 60);
+    check_fade(&mut state, 238, now, Duration::from_secs(15 * 60));
 }

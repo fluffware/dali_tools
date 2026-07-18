@@ -1,4 +1,4 @@
-use dali_tools::drivers::driver::{DaliBusEventType, DaliFrame, DaliSendResult};
+use dali_tools::drivers::driver::DaliFrame;
 use dali_tools::drivers::send_flags::Flags;
 use dali_tools::simulator::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent};
 use log::{debug, error};
@@ -54,7 +54,7 @@ impl Driver {
                 _ => {}
             }
         }
-        let res = self.bus_device.send_frame(frame, flags).await;
+        let _res = self.bus_device.send_frame(frame, flags).await;
         loop {
             match self.bus_device.wait_until(now).await {
                 DaliSimBusDeviceEvent::Timeout => {

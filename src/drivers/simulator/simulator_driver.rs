@@ -213,7 +213,7 @@ fn driver_open(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, O
             .into(),
         )
     })?;
-    let (bus, mut sched) = simulator::setup::setup_simulator(conf_file)
+    let (bus, mut sched, _) = simulator::setup::setup_simulator(conf_file)
         .map_err(|e| OpenError::DriverError(e.into()))?;
 
     let bus_device = DaliSimBusDevice::new(bus, sched.new_task());

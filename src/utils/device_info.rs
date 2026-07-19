@@ -86,7 +86,7 @@ pub fn fmt_scenes(f: &mut fmt::Formatter<'_>, scenes: &[u8; 16]) -> fmt::Result 
     let mut str = Vec::new();
     for (i, &scene) in scenes.iter().enumerate() {
         if scene != MASK {
-            str.push(format!("{}: {}", i, scene));
+            str.push(format!("{}: {}", i + 1, scene));
         }
     }
     f.write_str(&str.join(", "))

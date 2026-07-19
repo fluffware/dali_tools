@@ -1,19 +1,94 @@
 use clap::{Arg, Command};
 use dali::drivers::driver::{DaliDriver, DaliFrame, OpenError};
 use dali::drivers::send_flags;
+use dali::httpd::{self, ServerConfig};
 use dali::simulator;
+use dali::simulator::device::DaliSimDevice;
 use dali::simulator::timing;
 use dali_tools as dali;
 use dali_tools::simulator::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent};
 use futures::FutureExt;
 use futures::future::{Fuse, FusedFuture};
+use hyper::{Body, Request, Response};
+use hyper::{header, http};
 use log::debug;
 use log::error;
+use std::collections::BTreeMap;
 use std::fs::File;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
+type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn bad_request(msg: &str) -> DynResult<Response<Body>> {
+    Response::builder()
+        .status(http::StatusCode::BAD_REQUEST)
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from(msg.to_owned()))
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+}
+
+fn decode_get_request(
+    req: Request<Body>,
+    sim_devices: &Vec<Box<dyn DaliSimDevice>>,
+) -> DynResult<Response<Body>> {
+    if let Some(addr) = req.uri().path().strip_prefix("/dyn/dali/device/") {
+        let Ok(addr) = u8::from_str(addr) else {
+            return bad_request("Invalid device address");
+        };
+        let mut sim_device = None;
+        for dev in sim_devices {
+            if let Ok(Ok(dev_addr)) = dev.get_parameter("shortAddress").map(|v| u8::from_str(&v)) {
+                debug!("Checking dev {}", dev_addr);
+                if dev_addr == addr {
+                    sim_device = Some(dev);
+                    break;
+                }
+            }
+        }
+        let Some(sim_device) = sim_device else {
+            return bad_request("No device with given address");
+        };
+        let mut values = BTreeMap::new();
+        if let Some(query) = req.uri().query() {
+            let mut query_parts = query.split('&');
+            for kv in query_parts {
+                let Some((k, p)) = kv.split_once('=') else {
+                    return bad_request("Missing '='");
+                };
+                match k {
+                    "get" => {
+                        let Ok(v) = sim_device.get_parameter(p) else {
+                            return bad_request(&format!("No parameter named '{}' found", p));
+                        };
+                        values.insert(p, v);
+                    }
+                    _ => return bad_request(&format!("'{}' not supported", k)),
+                }
+            }
+        }
+        let reply = "{".to_string()
+            + &values
+                .iter()
+                .map(|(k, v)| "\"".to_string() + k + "\":" + v)
+                .collect::<Vec<String>>()
+                .join(",")
+            + "}";
+        Response::builder()
+            .status(http::StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(reply))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    } else {
+        Response::builder()
+            .status(http::StatusCode::NOT_FOUND)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("No such command".to_string()))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+}
 #[cfg(feature = "sim_serial")]
 mod sim_serial;
 #[cfg(not(feature = "sim_serial"))]
@@ -22,8 +97,8 @@ mod sim_serial {
     use tokio_util::sync::CancellationToken;
 
     pub async fn start_serial(
-        bus_device: DaliSimBusDevice,
-        port_path: &str,
+        _bus_device: DaliSimBusDevice,
+        _port_path: &str,
         cancel: CancellationToken,
     ) -> Result<(), Box<dyn std::error::Error>> {
         cancel.cancelled().await;
@@ -118,7 +193,7 @@ async fn main() {
             return;
         }
     };
-    let (bus, mut sched) = match simulator::setup::setup_simulator(conf_file) {
+    let (bus, mut sched, sim_devices) = match simulator::setup::setup_simulator(conf_file) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to start simulator: {}", e);
@@ -159,6 +234,18 @@ async fn main() {
     };
     tokio::pin!(dali_hw);
 
+    let mut web_server = {
+        let mut web_conf = ServerConfig::new();
+        web_conf = web_conf.port(1122);
+        web_conf = web_conf.build_page(Box::new(move |req| decode_get_request(req, &sim_devices)));
+        match httpd::start(web_conf) {
+            Ok((server, _bound_ip, _bound_port)) => server.fuse(),
+            Err(e) => {
+                eprintln!("Failed to start web server");
+                return;
+            }
+        }
+    };
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
     loop {
@@ -182,12 +269,24 @@ async fn main() {
 		}
 		break;
             }
+	    res = &mut web_server => {
+		if let Err(_) = res {
+                    error!("Web server failed");
+		}
+		break;
+	    }
         }
     }
     cancel.cancel();
     debug!("Cancelled");
+    if !web_server.is_terminated() {
+        let _ = web_server.await;
+    }
     if !serial.is_terminated() {
         let _ = serial.await;
+    }
+    if !dali_hw.is_terminated() {
+        let _ = dali_hw.await;
     }
     debug!("Exiting");
 }

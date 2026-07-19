@@ -42,7 +42,8 @@ rand = { version = "0.10.1", features = ["thread_rng"] }
 paste = "1.0.15"
 linkme = "0.3.36"
 tokio-util = "0.7.18"
-
+field_access_json_derive="*"
+field_access_json="*"
 
 [[bin]]
 name = "helvar_dump"

@@ -12,6 +12,7 @@ mod monitor;
 mod power;
 mod query;
 mod randomize;
+mod scene;
 mod send;
 mod set_addr;
 mod swap;
@@ -53,6 +54,7 @@ async fn main() {
     add_tool(swap::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(send::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(monitor::init_subtool(), &mut tool_map, &mut cli_cmd);
+    add_tool(scene::init_subtool(), &mut tool_map, &mut cli_cmd);
     let matches = cli_cmd.get_matches();
 
     let device_name = matches.get_one::<String>("DEVICE").unwrap();

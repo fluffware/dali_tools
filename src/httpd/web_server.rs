@@ -15,17 +15,17 @@ use std::sync::{Arc, Mutex};
 pub type BuildPage = Box<dyn FnMut(Request<Body>) -> DynResult<Response<Body>> + Send>;
 
 /// Takes a path and returns (mime_type, resource_data)
-pub type GetResurce = Box<dyn FnMut(&str) -> DynResult<(&str, Bytes)> + Send>;
+pub type GetResource = Box<dyn FnMut(&str) -> DynResult<(&str, Bytes)> + Send>;
 
 pub struct ServerConfig {
     bind_addr: Option<IpAddr>,
     port: Option<u16>,
     build_page: Option<BuildPage>,
-    web_resource: GetResurce,
+    web_resource: GetResource,
 }
 
 fn no_resource(_path: &str) -> DynResult<(&str, Bytes)> {
-    Err("No rosurce".into())
+    Err("No resource".into())
 }
 impl ServerConfig {
     pub fn new() -> Self {
@@ -46,7 +46,7 @@ impl ServerConfig {
         self
     }
 
-    pub fn web_resource(mut self, resource: GetResurce) -> Self {
+    pub fn web_resource(mut self, resource: GetResource) -> Self {
         self.web_resource = resource;
         self
     }

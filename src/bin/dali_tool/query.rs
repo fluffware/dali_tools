@@ -1,5 +1,5 @@
 use super::sub_tool::{SubTool, ToolContext};
-use clap::{Arg, ArgMatches, Command, value_parser};
+use clap::{Arg, ArgMatches, Command};
 use dali_tools::common::address::Short;
 use dali_tools::common::commands::Commands;
 use dali_tools::control::commands_103::Commands103;
@@ -80,9 +80,7 @@ pub fn init_subtool() -> SubTool {
             Arg::new("memory_banks")
                 .short('m')
                 .long("memory-banks")
-                .value_parser(value_parser!(bool))
-                .default_value("false")
-                .default_missing_value("true")
+		 .action(clap::ArgAction::SetTrue)
                 .help("Read information from memory banks"),
         )
         .arg(

@@ -8,9 +8,13 @@ use crate::drivers::driver::DaliBusEventType;
 use crate::drivers::send_flags::Flags;
 use crate::gear::cmd_defs;
 use crate::gear::{device_type, light_source, status};
+use crate::simulator::device::ParameterError;
+use field_access_json::{Error as FieldError, FieldAccessJson};
+use field_access_json_derive::FieldAccessJson;
 use linkme::distributed_slice;
 use log::debug;
 use rand::RngExt;
+use serde_derive::Serialize;
 use std::cmp::{max, min};
 use std::convert::TryFrom;
 use std::ops::RangeBounds;
@@ -43,10 +47,14 @@ pub enum WriteEnableState {
     DISABLED,
 }
 
+const LEVEL_HIRES_SHIFT: i32 = 7;
+const LEVEL_HIRES_SCALE: i16 = 1i16 << 7;
+#[derive(Serialize, FieldAccessJson)]
+#[serde(rename_all = "camelCase")]
 pub struct GearState {
     pub powered: bool,
 
-    pub target_level: u8,
+    pub target_level: i16, // Scaled by 128
     pub last_active_level: u8,
     pub last_light_level: u8,
     pub power_on_level: u8,
@@ -59,7 +67,9 @@ pub struct GearState {
     pub search_address: u32,
     pub random_address: u32,
     pub operating_mode: u8,
+    #[serde(skip)]
     pub initialisation_state: InitialisationState,
+    #[serde(skip)]
     pub write_enable_state: WriteEnableState,
     pub status: u8,
     pub gear_groups: u16,
@@ -70,17 +80,20 @@ pub struct GearState {
     pub physical_minimum_level: u8,
 
     // Slope of actualLevel towards targetLevel, in steps/ms
+    #[serde(skip)]
     fade_slope: i32, // Fixed point, slope*(1<<29)
+    #[serde(skip)]
     fade_end_time: Instant,
 
     // Init timer
+    #[serde(skip)]
     init_end_time: Instant,
 
+    #[serde(skip)]
     current_time: Instant, // Time for evaluating, timers, fades, etc.
 }
 
 const FADE_SLOPE_SHIFT: i32 = 29;
-const FADE_HIRES_SHIFT: i32 = 7;
 
 impl GearState {
     pub fn new(random_address: u32, now: Instant) -> GearState {
@@ -88,7 +101,7 @@ impl GearState {
         GearState {
             powered: true,
 
-            target_level: 0xfe,
+            target_level: 0xfe * LEVEL_HIRES_SCALE,
             last_active_level: 0xfe,
             last_light_level: 0xfe,
             power_on_level: 0xfe,
@@ -124,7 +137,7 @@ impl GearState {
     pub fn actual_level_hires_at(&self, time: Instant) -> i16 {
         if self.status & status::flag::FADE_RUNNING != 0 {
             if time > self.fade_end_time {
-                i16::from(self.target_level) << 7
+                i16::from(self.target_level)
             } else {
                 let millis_left = (self.fade_end_time - time).as_millis() as i64;
                 println!(
@@ -132,15 +145,15 @@ impl GearState {
                     self.target_level, self.fade_slope, millis_left
                 );
                 dbg!(i16::try_from(
-                    ((self.target_level as i64) << FADE_HIRES_SHIFT)
+                    (self.target_level as i64)
                         - (self.fade_slope as i64 * millis_left
-                            + (1 << (FADE_SLOPE_SHIFT - FADE_HIRES_SHIFT - 1))
-                            >> (FADE_SLOPE_SHIFT - FADE_HIRES_SHIFT))
+                            + (1 << (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT - 1))
+                            >> (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT))
                 ),)
                 .unwrap()
             }
         } else {
-            i16::from(self.target_level) << 7
+            i16::from(self.target_level)
         }
     }
     pub fn actual_level_at(&self, time: Instant) -> u8 {
@@ -153,11 +166,11 @@ impl GearState {
     /// Immediately change actual_level and target_level
     pub fn set_actual_level(&mut self, level: u8) {
         self.status &= !status::flag::FADE_RUNNING;
-        self.target_level = level;
+        self.target_level = i16::from(level) * LEVEL_HIRES_SCALE;
     }
 
     pub fn reset(&mut self) {
-        self.target_level = 0xfe;
+        self.target_level = 0xfe * LEVEL_HIRES_SCALE;
         self.last_active_level = 0xfe;
         self.last_light_level = 0xfe;
         self.power_on_level = 0xfe;
@@ -252,13 +265,14 @@ fn start_fade(dev: &mut GearState, new_target_level: u8, now: Instant, fade_dura
     // Calulate actual position shifted up by FADE_SLOPE_SHIFT
     let actual_level = if dev.status & status::flag::FADE_RUNNING != 0 {
         if now > dev.fade_end_time {
-            i64::from(dev.target_level) << FADE_SLOPE_SHIFT
+            i64::from(dev.target_level) << (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT)
         } else {
             let millis_left = (dev.fade_end_time - now).as_millis() as i64;
-            ((dev.target_level as i64) << FADE_SLOPE_SHIFT) - (dev.fade_slope as i64) * millis_left
+            ((dev.target_level as i64) << (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT))
+                - (dev.fade_slope as i64) * millis_left
         }
     } else {
-        i64::from(dev.target_level) << FADE_SLOPE_SHIFT
+        i64::from(dev.target_level) << (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT)
     };
 
     let duration = fade_duration.as_millis() as i64;
@@ -267,18 +281,30 @@ fn start_fade(dev: &mut GearState, new_target_level: u8, now: Instant, fade_dura
     )
     .unwrap();
     dev.fade_end_time = now + fade_duration;
-    dev.target_level = new_target_level;
+    dev.target_level = i16::from(new_target_level) << LEVEL_HIRES_SHIFT;
     dev.status |= status::flag::FADE_RUNNING;
 }
 
+fn stop_fade(dev: &mut GearState) {
+    if dev.status & status::flag::FADE_RUNNING != 0 {
+        dev.target_level = dev.actual_level_hires_at(dev.current_time);
+        dev.status &= !status::flag::FADE_RUNNING;
+    }
+}
 fn start_fade_time(dev: &mut GearState, new_target_level: u8) {
+    if new_target_level == MASK {
+        stop_fade(dev);
+        return;
+    }
     let now = dev.current_time;
 
     let fade_duration = if (dev.fade & 0xf0) == 0x0 {
         // Use extended fade times
         if (dev.extended_fade_time & 0x70) == 0 || dev.extended_fade_time > 0x4f {
             // Extended fade is zero
-            dev.set_actual_level(dev.target_level);
+            dev.set_actual_level(
+                ((dev.target_level + LEVEL_HIRES_SCALE / 2) >> LEVEL_HIRES_SHIFT) as u8,
+            );
             return;
         } else {
             // Extended fade time
@@ -484,27 +510,45 @@ fn level_cmd(dev: &mut GearState, cmd: u8, _flags: Flags) -> Option<DaliBusEvent
     NO_REPLY
 }
 fn goto_scene_cmd(
-    _dev: &mut GearState,
+    dev: &mut GearState,
     _addr: u8,
-    _cmd: u8,
+    cmd: u8,
     _flags: Flags,
 ) -> Option<DaliBusEventType> {
+    if (cmd_defs::GOTO_SCENE_FIRST_OPCODE_BYTE..=cmd_defs::GOTO_SCENE_LAST_OPCODE_BYTE)
+        .contains(&cmd)
+    {
+        let scene = usize::from(cmd - cmd_defs::GOTO_SCENE_FIRST_OPCODE_BYTE);
+        start_fade_time(dev, dev.scenes[scene]);
+    }
     NO_REPLY
 }
 fn set_scene_cmd(
-    _dev: &mut GearState,
+    dev: &mut GearState,
     _addr: u8,
-    _cmd: u8,
+    cmd: u8,
     _flags: Flags,
 ) -> Option<DaliBusEventType> {
+    if (cmd_defs::SET_SCENE_FIRST_OPCODE_BYTE..=cmd_defs::SET_SCENE_LAST_OPCODE_BYTE).contains(&cmd)
+    {
+        let scene = usize::from(cmd - cmd_defs::SET_SCENE_FIRST_OPCODE_BYTE);
+        dev.scenes[scene] = dev.dtr0;
+    }
     NO_REPLY
 }
 fn remove_from_scene_cmd(
-    _dev: &mut GearState,
+    dev: &mut GearState,
     _addr: u8,
-    _cmd: u8,
+    cmd: u8,
     _flags: Flags,
 ) -> Option<DaliBusEventType> {
+    if (cmd_defs::REMOVE_FROM_SCENE_FIRST_OPCODE_BYTE
+        ..=cmd_defs::REMOVE_FROM_SCENE_LAST_OPCODE_BYTE)
+        .contains(&cmd)
+    {
+        let scene = usize::from(cmd - cmd_defs::REMOVE_FROM_SCENE_FIRST_OPCODE_BYTE);
+        dev.scenes[scene] = MASK;
+    }
     NO_REPLY
 }
 
@@ -551,9 +595,10 @@ fn set_param_cmd(dev: &mut GearState, cmd: u8, flags: Flags) -> Option<DaliBusEv
                     dev.dtr0
                 };
                 if dev.actual_level() > dev.max_level {
-                    dev.target_level = dev.max_level;
-                    dev.set_actual_level(dev.target_level);
-                } else if dev.target_level > dev.max_level && dev.fade_end_time > dev.current_time {
+                    dev.set_actual_level(dev.max_level);
+                } else if dev.target_level > i16::from(dev.max_level) * LEVEL_HIRES_SCALE
+                    && dev.fade_end_time > dev.current_time
+                {
                     start_fade(
                         dev,
                         dev.max_level,
@@ -574,9 +619,10 @@ fn set_param_cmd(dev: &mut GearState, cmd: u8, flags: Flags) -> Option<DaliBusEv
                 };
                 let actual_level = dev.actual_level();
                 if actual_level > 0 && actual_level < dev.min_level {
-                    dev.target_level = dev.max_level;
-                    dev.set_actual_level(dev.target_level);
-                } else if dev.target_level < dev.min_level && dev.fade_end_time > dev.current_time {
+                    dev.set_actual_level(dev.max_level);
+                } else if dev.target_level < i16::from(dev.min_level) * LEVEL_HIRES_SCALE
+                    && dev.fade_end_time > dev.current_time
+                {
                     start_fade(
                         dev,
                         dev.min_level,
@@ -739,7 +785,9 @@ fn special_cmd(dev: &mut GearState, cmd: u8, data: u8, flags: Flags) -> Option<D
         }
 
         cmd_defs::PROGRAM_SHORT_ADDRESS_ADDRESS_BYTE => {
-            if dev.initialisation_state != InitialisationState::DISABLED {
+            if dev.initialisation_state != InitialisationState::DISABLED
+                && dev.random_address == dev.search_address
+            {
                 if (data & 0x81) == 0x01 {
                     dev.short_address = data >> 1;
                 } else if data == MASK {
@@ -919,6 +967,22 @@ impl DaliSimDevice for DaliSimGear {
     fn stop(&mut self) -> DynResult<()> {
         Ok(())
     }
+
+    fn get_parameter(&self, name: &str) -> Result<String, ParameterError> {
+        let state = self.state.write().unwrap();
+        match name {
+            "shortAddress" => Ok(serde_json::to_string(&state.short_address).unwrap()),
+            n => match state.get_field(n) {
+                Ok(value) => Ok(value),
+                Err(FieldError::NotFound) => Err(ParameterError::NotFound),
+                Err(FieldError::ConversionError(_)) => Err(ParameterError::InvalidValue),
+            },
+        }
+    }
+
+    fn set_parameter(&self, name: &str, value: &str) -> Result<(), ParameterError> {
+        Ok(())
+    }
 }
 
 async fn device_thread(bus: DaliSimBusDevice, state: Arc<RwLock<GearState>>) {
@@ -1001,7 +1065,7 @@ fn check_fade(state: &mut GearState, target_level: u8, now: Instant, duration: D
     // End of fade should always be exact
     assert_eq!(
         state.actual_level_hires_at(now + duration),
-        i16::from(target_level) << 7
+        i16::from(target_level) << LEVEL_HIRES_SHIFT
     );
 }
 
@@ -1009,7 +1073,7 @@ fn check_fade(state: &mut GearState, target_level: u8, now: Instant, duration: D
 fn test_fade() {
     let mut now = Instant::now();
     let mut state = GearState::new(0xffffff, now);
-    state.target_level = 78;
+    state.target_level = 78 * LEVEL_HIRES_SCALE;
     check_fade(&mut state, 254, now, Duration::from_millis(100));
 
     now += Duration::from_millis(43);

@@ -1,6 +1,6 @@
 use crate::simulator;
 use log::{debug, warn};
-use simulator::device::DALI_SIMULATOR_DEVICES;
+use simulator::device::{DALI_SIMULATOR_DEVICES, DaliSimDevice};
 use simulator::sim_bus::{DaliSimBus, DaliSimBusDevice};
 use simulator::sim_scheduler::SimulatorScheduler;
 use simulator::sim_scheduler_impl::SimulatorSchedulerImpl;
@@ -9,7 +9,11 @@ use std::sync::Arc;
 pub fn setup_simulator<R>(
     conf_file: R,
 ) -> Result<
-    (Arc<DaliSimBus>, Box<dyn SimulatorScheduler + Send + Sync>),
+    (
+        Arc<DaliSimBus>,
+        Box<dyn SimulatorScheduler + Send + Sync>,
+        Vec<Box<dyn DaliSimDevice>>,
+    ),
     Box<dyn std::error::Error + Sync + Send>,
 >
 where
@@ -24,6 +28,7 @@ where
     };
     let mut sched = SimulatorSchedulerImpl::new();
     let bus = DaliSimBus::new(sched.new_task());
+    let mut devices = Vec::new();
     for device in device_list {
         let yaml_serde::Value::Mapping(conf) = device else {
             return Err("Item in device list is not a mapping".into());
@@ -39,10 +44,11 @@ where
             };
             let mut device = (dev_entry.init)();
             device.configure(conf)?;
-            device.start(DaliSimBusDevice::new(bus.clone(), sched.new_task()))?
+            device.start(DaliSimBusDevice::new(bus.clone(), sched.new_task()))?;
+            devices.push(device);
         } else {
             warn!("Device configuration has no 'type' tag");
         }
     }
-    Ok((bus, Box::new(sched)))
+    Ok((bus, Box::new(sched), devices))
 }

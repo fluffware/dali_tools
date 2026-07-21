@@ -969,9 +969,9 @@ impl DaliSimDevice for DaliSimGear {
     }
 
     fn get_parameter(&self, name: &str) -> Result<String, ParameterError> {
-        let state = self.state.write().unwrap();
+        let state = self.state.read().unwrap();
         match name {
-            "shortAddress" => Ok(serde_json::to_string(&state.short_address).unwrap()),
+            "shortAddress" => Ok(serde_json::to_string(&(state.short_address + 1)).unwrap()),
             n => match state.get_field(n) {
                 Ok(value) => Ok(value),
                 Err(FieldError::NotFound) => Err(ParameterError::NotFound),
@@ -981,7 +981,24 @@ impl DaliSimDevice for DaliSimGear {
     }
 
     fn set_parameter(&self, name: &str, value: &str) -> Result<(), ParameterError> {
-        Ok(())
+        let mut state = self.state.write().unwrap();
+        match name {
+            "shortAddress" => match serde_json::from_str::<u8>(value) {
+                Ok(value) => {
+                    if !(1..64).contains(&value) && value != MASK {
+                        return Err(ParameterError::InvalidValue);
+                    }
+                    state.short_address = value - 1;
+                    Ok(())
+                }
+                Err(_) => Err(ParameterError::InvalidValue),
+            },
+            n => match state.set_field(n, value.to_string()) {
+                Ok(()) => Ok(()),
+                Err(FieldError::NotFound) => Err(ParameterError::NotFound),
+                Err(FieldError::ConversionError(_)) => Err(ParameterError::InvalidValue),
+            },
+        }
     }
 }
 

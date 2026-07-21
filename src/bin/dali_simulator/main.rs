@@ -3,7 +3,7 @@ use dali::drivers::driver::{DaliDriver, DaliFrame, OpenError};
 use dali::drivers::send_flags;
 use dali::httpd::{self, ServerConfig};
 use dali::simulator;
-use dali::simulator::device::DaliSimDevice;
+use dali::simulator::device::{DaliSimDevice, ParameterError};
 use dali::simulator::timing;
 use dali_tools as dali;
 use dali_tools::simulator::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent};
@@ -53,7 +53,7 @@ fn decode_get_request(
         };
         let mut values = BTreeMap::new();
         if let Some(query) = req.uri().query() {
-            let mut query_parts = query.split('&');
+            let query_parts = query.split('&');
             for kv in query_parts {
                 let Some((k, p)) = kv.split_once('=') else {
                     return bad_request("Missing '='");
@@ -64,6 +64,26 @@ fn decode_get_request(
                             return bad_request(&format!("No parameter named '{}' found", p));
                         };
                         values.insert(p, v);
+                    }
+                    "set" => {
+                        let Some((p, v)) = p.split_once(':') else {
+                            return bad_request(
+                                "The argumet of set must be <parameter name>:<value>",
+                            );
+                        };
+
+                        match sim_device.set_parameter(p, v) {
+                            Ok(()) => {}
+                            Err(ParameterError::NotFound) => {
+                                return bad_request(&format!("No parameter named '{}' found", p));
+                            }
+                            Err(ParameterError::InvalidValue) => {
+                                return bad_request(&format!(
+                                    "Invalid parameter value for '{}'",
+                                    p
+                                ));
+                            }
+                        };
                     }
                     _ => return bad_request(&format!("'{}' not supported", k)),
                 }
@@ -146,6 +166,7 @@ async fn dali_listener(
 				    timing::send_delay(1,false)
 				}
 			    };
+			    debug!("Delayed {:?}",start - delay);
 			    tokio::time::sleep_until((start - delay).into()).await;
 			    driver.send_frame(frame,send_flags::Flags::Priority(1)).await;
 			}
@@ -178,7 +199,6 @@ async fn main() {
                 .short('d')
                 .long("device")
                 .env("DALI_DEVICE")
-                .default_value("default")
                 .help("Select DALI-device"),
         );
     let matches = cli_cmd.get_matches();
@@ -241,7 +261,7 @@ async fn main() {
         match httpd::start(web_conf) {
             Ok((server, _bound_ip, _bound_port)) => server.fuse(),
             Err(e) => {
-                eprintln!("Failed to start web server");
+                eprintln!("Failed to start web server: {e}");
                 return;
             }
         }

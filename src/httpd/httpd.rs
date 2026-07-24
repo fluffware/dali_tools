@@ -17,9 +17,10 @@ use std::net::IpAddr;
 #[include = "*.wav"]
 struct WebFiles;
 
-pub fn start(
+pub async fn start(
     conf: ServerConfig,
-) -> DynResult<(impl Future<Output = Result<(), hyper::Error>>, IpAddr, u16)> {
+    cancel: impl Future<Output = ()>,
+) -> DynResult<(impl Future<Output = DynResult<()>>, IpAddr, u16)> {
     let conf = conf.web_resource(Box::new(|path| {
         let mut path = path.trim_start_matches('/');
         if path.is_empty() {
@@ -44,7 +45,5 @@ pub fn start(
         }
     }));
 
-    let (server, bound_ip, bound_port) = web_server::setup_server(conf);
-
-    Ok((server, bound_ip, bound_port))
+    web_server::setup_server(conf, cancel).await
 }

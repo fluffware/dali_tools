@@ -1,0 +1,20 @@
+#device_info {
+    display: inline-block;
+}
+
+#layout {
+    display: inline-block;
+    margin-left: 20px;
+}
+
+#layout_file {
+    display: block;
+}
+#layout_frame {
+    display: block;
+}
+
+.button {
+    display: inline;
+    height:15px;
+}

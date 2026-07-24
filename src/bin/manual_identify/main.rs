@@ -1,3 +1,6 @@
+use bytes::Bytes;
+use http_body_util::Full;
+use hyper::body::Incoming;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::File;
@@ -17,7 +20,7 @@ use futures::future::{Fuse, FutureExt};
 use log::{debug, error, info};
 use std::future::Future;
 
-use hyper::{Body, Request, Response};
+use hyper::{Request, Response};
 use hyper::{header, http};
 use serde::Serialize;
 use serde::Serializer;
@@ -440,11 +443,11 @@ impl std::fmt::Display for ResponseError {
     }
 }
 
-fn bad_request(msg: &str) -> DynResult<Response<Body>> {
+fn bad_request(msg: &str) -> DynResult<Response<Full<Bytes>>> {
     Response::builder()
         .status(http::StatusCode::BAD_REQUEST)
         .header(header::CONTENT_TYPE, "text/plain")
-        .body(Body::from(msg.to_owned()))
+        .body(Full::new(Bytes::from(msg.to_owned())))
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
 }
 
@@ -471,11 +474,11 @@ where
 static NEXT_LOG_ID: AtomicU16 = AtomicU16::new(0);
 
 fn decode_get_request(
-    req: Request<Body>,
+    req: Request<Incoming>,
     cmd_req: mpsc::Sender<DaliCommandRequest>,
     ctxt: &Arc<IdentificationCtxt>,
     log: CmdLog,
-) -> DynResult<Response<Body>> {
+) -> DynResult<Response<Full<Bytes>>> {
     if req.uri().path() == "/dyn/dali" {
         let mut args = BTreeMap::new();
         if let Some(query) = req.uri().query() {
@@ -540,7 +543,7 @@ fn decode_get_request(
         Response::builder()
             .status(http::StatusCode::ACCEPTED)
             .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from(format!("{{\"id\":{id}}}")))
+            .body(Full::new(Bytes::from(format!("{{\"id\":{id}}}"))))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     } else if req.uri().path() == "/dyn/cmd_status" {
         let entry = log.lock(|log| {
@@ -564,13 +567,13 @@ fn decode_get_request(
         Response::builder()
             .status(http::StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(entry))
+            .body(Full::new(Bytes::from(entry)))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     } else if req.uri().path() == "/dyn/scan_state" {
         Response::builder()
             .status(http::StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(reply_scan_update(ctxt)))
+            .body(Full::new(Bytes::from(reply_scan_update(ctxt))))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     } else if req.uri().path() == "/dyn/configuration" {
         if let Ok(index) = u16::from_str(req.uri().query().unwrap_or(""))
@@ -579,20 +582,20 @@ fn decode_get_request(
             Response::builder()
                 .status(http::StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(reply))
+                .body(Full::new(Bytes::from(reply)))
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         } else {
             Response::builder()
                 .status(http::StatusCode::BAD_REQUEST)
                 .header(header::CONTENT_TYPE, "text/plain")
-                .body(Body::from("Invalid configuration index"))
+                .body(Full::new(Bytes::from("Invalid configuration index")))
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         }
     } else {
         Response::builder()
             .status(http::StatusCode::NOT_FOUND)
             .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from("No such command".to_string()))
+            .body(Full::new(Bytes::from("No such command".to_string())))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
@@ -929,7 +932,13 @@ async fn main() -> ExitCode {
     conf = conf.build_page(Box::new(move |req| {
         decode_get_request(req, cmd_req_tx.clone(), &id_ctxt, cmd_log.clone())
     }));
-    let (server, addr, port) = httpd::start(conf).unwrap();
+    let (server, addr, port) = match httpd::start(conf, std::future::pending()).await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to start web server: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let url = format!("http://{}:{}", addr, port);
     info!("Started server at {}", url);
     tokio::select! {

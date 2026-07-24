@@ -1,18 +1,22 @@
 use crate::error::DynResult;
 use bytes::Bytes;
+use http_body_util::Full;
 use hyper::Method;
+use hyper::body::Incoming;
 use hyper::header;
 use hyper::http::StatusCode;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use hyper_util::rt::TokioIo;
 #[allow(unused_imports)]
 use log::{debug, error, info};
-use std::convert::Infallible;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
+use tokio::net::TcpListener;
 
-pub type BuildPage = Box<dyn FnMut(Request<Body>) -> DynResult<Response<Body>> + Send>;
+pub type BuildPage = Box<dyn FnMut(Request<Incoming>) -> DynResult<Response<Full<Bytes>>> + Send>;
 
 /// Takes a path and returns (mime_type, resource_data)
 pub type GetResource = Box<dyn FnMut(&str) -> DynResult<(&str, Bytes)> + Send>;
@@ -63,7 +67,10 @@ impl Default for ServerConfig {
     }
 }
 
-async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult<Response<Body>> {
+async fn handle(
+    conf: Arc<Mutex<ServerConfig>>,
+    req: Request<Incoming>,
+) -> DynResult<Response<Full<Bytes>>> {
     let path = req.uri().path();
     match req.method() {
         &Method::GET => {
@@ -75,7 +82,7 @@ async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult
                     Response::builder()
                         .status(StatusCode::NOT_FOUND)
                         .header(header::CONTENT_TYPE, "text/plain")
-                        .body(Body::from("No dynamic content".to_string()))
+                        .body(Full::new(Bytes::from("No dynamic content".to_string())))
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                 }
             } else {
@@ -87,7 +94,7 @@ async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult
                             return Response::builder()
                                 .status(StatusCode::NOT_FOUND)
                                 .header(header::CONTENT_TYPE, "text/plain")
-                                .body(Body::from(format!("File error: {e}")))
+                                .body(Full::new(Bytes::from(format!("File error: {e}"))))
                                 .map_err(|e| {
                                     Box::new(e) as Box<dyn std::error::Error + Send + Sync>
                                 });
@@ -97,32 +104,59 @@ async fn handle(conf: Arc<Mutex<ServerConfig>>, req: Request<Body>) -> DynResult
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, mime_type)
-                    .body(Body::from(data))
+                    .body(Full::new(Bytes::from(data)))
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
             }
         }
         m => Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from(format!("Method {m} not supported")))
+            .body(Full::new(Bytes::from(format!("Method {m} not supported"))))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
     }
 }
-pub fn setup_server(
+pub async fn setup_server(
     conf: ServerConfig,
-) -> (impl Future<Output = Result<(), hyper::Error>>, IpAddr, u16) {
+    cancel: impl Future<Output = ()>
+) -> DynResult<(impl Future<Output = DynResult<()>>, IpAddr, u16)> {
     let port = conf.port.unwrap_or(0);
     let bind_addr = conf
         .bind_addr
         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
     let socket_addr = SocketAddr::new(bind_addr, port);
     let conf = Arc::new(Mutex::new(conf));
-    let make_service = make_service_fn(move |_conn| {
-        let conf = conf.clone();
-        async move { Ok::<_, Infallible>(service_fn(move |req| handle(conf.clone(), req))) }
-    });
-    let server = Server::bind(&socket_addr).serve(make_service);
-    let port = server.local_addr().port();
-    let addr = server.local_addr().ip();
-    (server, addr, port)
+    let listener = TcpListener::bind(&socket_addr).await?;
+    let port = listener.local_addr().unwrap().port();
+    let addr = listener.local_addr().unwrap().ip();
+    let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+    let http = http1::Builder::new();
+    let mut cancel = Box::pin(cancel);
+    let server = async move {
+        loop {
+            let conf_clone = conf.clone();
+	    #[rustfmt::skip]
+            tokio::select! {
+		Ok((stream, _)) = listener.accept() => {
+                    let io = TokioIo::new(stream);
+                    let http_conn =
+			http.serve_connection(io, service_fn(move |req| {
+			    handle(conf_clone.clone(), req)
+			}));
+                    let run = graceful.watch(http_conn);
+		    
+                    tokio::task::spawn(async move {
+			if let Err(err) = run.await {
+			    error!("Error serving connection: {:?}", err);
+			}
+                    });
+		}
+		() = &mut cancel => {
+                    drop(listener);
+                    break;
+		}
+            }
+        }
+        Ok(())
+    };
+    Ok((server, addr, port))
 }

@@ -32,7 +32,7 @@ serde = "*"
 serde_derive = "*"
 
 
-hyper = {version="*", features = ["server", "runtime", "http1", "http2"], optional=true}
+hyper = {version="1.11.0", features = ["server", "http1", "http2"], optional=true}
 hyper-staticfile = {version = "*", optional=true}
 form_urlencoded = {version = "1.0", optional=true}
 bytes={version="*", optional=true}
@@ -44,6 +44,8 @@ linkme = "0.3.36"
 tokio-util = "0.7.18"
 field_access_json_derive="*"
 field_access_json="*"
+http-body-util = "0.1.4"
+hyper-util = { version = "0.1.20", features = ["tokio","server", "server-graceful", "http1"] }
 
 [[bin]]
 name = "helvar_dump"

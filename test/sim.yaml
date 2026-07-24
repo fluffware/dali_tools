@@ -1,0 +1,9 @@
+devices:
+  -
+    type: generic_gear
+    count: 64
+    shortAddress: 1
+    targetLevel: 0
+    fadeTime: 1
+
+    

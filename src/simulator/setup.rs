@@ -42,10 +42,13 @@ where
             else {
                 return Err(format!("Devivce type '{}' not available", device_type).into());
             };
-            let mut device = (dev_entry.init)();
-            device.configure(conf)?;
-            device.start(DaliSimBusDevice::new(bus.clone(), sched.new_task()))?;
-            devices.push(device);
+            let count = conf.get("count").and_then(|v| v.as_i64()).unwrap_or(1) as usize;
+            for index in 0..count {
+                let mut device = (dev_entry.init)();
+                device.configure(conf, index)?;
+                device.start(DaliSimBusDevice::new(bus.clone(), sched.new_task()))?;
+                devices.push(device);
+            }
         } else {
             warn!("Device configuration has no 'type' tag");
         }

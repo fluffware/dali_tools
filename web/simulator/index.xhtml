@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE html PUBLIC  '-//W3C//DTD XHTML 1.0 Strict//EN' 
+ 'http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd'>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    
+    <link rel="stylesheet" type="text/css" href="style.css"/>
+    
+    <script type="application/javascript" src="simulator.js">
+    </script>
+  </head>
+  <body onload="startup()">
+    <h1>Simulator</h1>
+    <div id="device_info">
+      <label for="current_address">Current address:</label>
+      <input id="current_address" type="number" value="1" min="1" max="64"/>
+      <table id="parameters">
+	<tr><td>actualLevel</td><td data-dali-gear-value="actualLevel"></td></tr>
+	<tr><td>targetLevel</td><td data-dali-gear-value="targetLevel"></td></tr>
+	<tr><td>minLevel</td><td data-dali-gear-value="minLevel"></td></tr>
+	<tr><td>maxLevel</td><td data-dali-gear-value="maxLevel"></td></tr>
+	<tr><td>fadeTime</td><td data-dali-gear-value="fadeTime"></td></tr>
+	<tr><td>fadeRate</td><td data-dali-gear-value="fadeRate"></td></tr>
+	<tr><td>extendedFadeTimeBase</td><td data-dali-gear-value="extendedFadeTimeBase"></td></tr>
+	<tr><td>extendedFadeTimeMultiplier</td><td data-dali-gear-value="extendedFadeTimeMultiplier"></td></tr>
+	<tr><td>controlGearFailure</td><td data-dali-gear-value="controlGearFailure" ></td><td>
+	    <img class="button" src="Larm.svg" onclick="dali_current_set('controlGearFailure',true)"/>
+	    <img class="button" src="OK.svg" onclick="dali_current_set('controlGearFailure',false)"/>
+	  </td></tr>
+	<tr><td>lampFailure</td><td data-dali-gear-value="lampFailure"></td>
+	  <td>
+	    <img class="button" src="Larm.svg" onclick="dali_current_set('lampFailure',true)"/>
+	    <img class="button" src="OK.svg" onclick="dali_current_set('lampFailure',false)"/>
+	</td></tr>
+      </table>
+    </div>
+    <div id="layout">
+      <input type="file" id="layout_file"/>
+      <iframe width="500" height="500" id="layout_frame"/>
+    </div>
+  </body>
+</html>

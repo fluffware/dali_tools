@@ -29,7 +29,10 @@ impl std::fmt::Display for ParameterError {
 }
 
 pub trait DaliSimDevice: Send {
-    fn configure(&mut self, conf: &Mapping) -> DynResult<()>;
+    /* If index > 0 then a single configuration is repeated for more than one
+    device. Adjust parameters (e.g. shorAddress) accordingly.
+    */
+    fn configure(&mut self, conf: &Mapping, index: usize) -> DynResult<()>;
     /// Called when the device is connected to a bus
     fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()>;
     /// Called when disconnected from the bus

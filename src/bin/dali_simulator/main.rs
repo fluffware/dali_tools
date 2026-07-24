@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use clap::{Arg, Command};
 use dali::drivers::driver::{DaliDriver, DaliFrame, OpenError};
 use dali::drivers::send_flags;
@@ -9,11 +10,14 @@ use dali_tools as dali;
 use dali_tools::simulator::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent};
 use futures::FutureExt;
 use futures::future::{Fuse, FusedFuture};
-use hyper::{Body, Request, Response};
+use http_body_util::Full;
+use hyper::body::Incoming;
+use hyper::{Request, Response};
 use hyper::{header, http};
 use log::debug;
 use log::error;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::str::FromStr;
 use std::time::Duration;
@@ -22,36 +26,23 @@ use tokio_util::sync::CancellationToken;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-fn bad_request(msg: &str) -> DynResult<Response<Body>> {
+fn bad_request(msg: &str) -> DynResult<Response<Full<Bytes>>> {
     Response::builder()
         .status(http::StatusCode::BAD_REQUEST)
         .header(header::CONTENT_TYPE, "text/plain")
-        .body(Body::from(msg.to_owned()))
+        .body(Full::new(Bytes::from(msg.to_owned())))
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
 }
 
 fn decode_get_request(
-    req: Request<Body>,
+    req: Request<Incoming>,
     sim_devices: &Vec<Box<dyn DaliSimDevice>>,
-) -> DynResult<Response<Body>> {
-    if let Some(addr) = req.uri().path().strip_prefix("/dyn/dali/device/") {
-        let Ok(addr) = u8::from_str(addr) else {
-            return bad_request("Invalid device address");
-        };
-        let mut sim_device = None;
-        for dev in sim_devices {
-            if let Ok(Ok(dev_addr)) = dev.get_parameter("shortAddress").map(|v| u8::from_str(&v)) {
-                debug!("Checking dev {}", dev_addr);
-                if dev_addr == addr {
-                    sim_device = Some(dev);
-                    break;
-                }
-            }
-        }
-        let Some(sim_device) = sim_device else {
-            return bad_request("No device with given address");
-        };
-        let mut values = BTreeMap::new();
+) -> DynResult<Response<Full<Bytes>>> {
+    if let Some(_) = req.uri().path().strip_prefix("/dyn/dali/device") {
+        let mut addrs = HashSet::new();
+        let mut gets = HashSet::new();
+        let mut sets = HashMap::new();
+
         if let Some(query) = req.uri().query() {
             let query_parts = query.split('&');
             for kv in query_parts {
@@ -59,20 +50,41 @@ fn decode_get_request(
                     return bad_request("Missing '='");
                 };
                 match k {
+                    "addr" => {
+                        for s in p.split(",") {
+                            let Ok(addr) = u8::from_str(s) else {
+                                return bad_request("Invalid device address");
+                            };
+                            addrs.insert(addr);
+                        }
+                    }
                     "get" => {
-                        let Ok(v) = sim_device.get_parameter(p) else {
-                            return bad_request(&format!("No parameter named '{}' found", p));
-                        };
-                        values.insert(p, v);
+                        for s in p.split(",") {
+                            gets.insert(s);
+                        }
                     }
                     "set" => {
-                        let Some((p, v)) = p.split_once(':') else {
-                            return bad_request(
-                                "The argumet of set must be <parameter name>:<value>",
-                            );
-                        };
-
-                        match sim_device.set_parameter(p, v) {
+                        for s in p.split(",") {
+                            let Some((p, v)) = s.split_once(':') else {
+                                return bad_request(
+                                    "The argumet of set must be <parameter name>:<value>",
+                                );
+                            };
+                            sets.insert(p, v);
+                        }
+                    }
+                    _ => return bad_request(&format!("'{}' not supported", k)),
+                }
+            }
+        }
+        let mut reply = String::from("{");
+        let mut first_addr = true;
+        // Go through all devices and set and get parameters
+        for dev in sim_devices {
+            if let Ok(Ok(dev_addr)) = dev.get_parameter("shortAddress").map(|v| u8::from_str(&v)) {
+                if addrs.contains(&dev_addr) {
+                    for (p, v) in &sets {
+                        match dev.set_parameter(p, v) {
                             Ok(()) => {}
                             Err(ParameterError::NotFound) => {
                                 return bad_request(&format!("No parameter named '{}' found", p));
@@ -83,29 +95,39 @@ fn decode_get_request(
                                     p
                                 ));
                             }
-                        };
+                        }
                     }
-                    _ => return bad_request(&format!("'{}' not supported", k)),
+                    if !first_addr {
+                        reply += ",";
+                    }
+                    first_addr = false;
+                    reply += &format!("\"{}\":{{", dev_addr);
+                    let mut first_param = true;
+                    for p in &gets {
+                        let Ok(v) = dev.get_parameter(p) else {
+                            return bad_request(&format!("No parameter named '{}' found", p));
+                        };
+                        if !first_param {
+                            reply += ",";
+                        }
+                        first_param = false;
+                        reply += &format!("\"{}\":{}", p, v);
+                    }
+                    reply += "}";
                 }
             }
         }
-        let reply = "{".to_string()
-            + &values
-                .iter()
-                .map(|(k, v)| "\"".to_string() + k + "\":" + v)
-                .collect::<Vec<String>>()
-                .join(",")
-            + "}";
+        reply += "}";
         Response::builder()
             .status(http::StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(reply))
+            .body(Full::new(Bytes::from(reply)))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     } else {
         Response::builder()
             .status(http::StatusCode::NOT_FOUND)
             .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from("No such command".to_string()))
+            .body(Full::new(Bytes::from("No such command".to_string())))
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
@@ -168,7 +190,7 @@ async fn dali_listener(
 			    };
 			    debug!("Delayed {:?}",start - delay);
 			    tokio::time::sleep_until((start - delay).into()).await;
-			    driver.send_frame(frame,send_flags::Flags::Priority(1)).await;
+			    driver.send_frame(frame,send_flags::Flags::Priority(0)).await;
 			}
 		    }
 		    DaliSimBusDeviceEvent::Timeout => {
@@ -254,11 +276,11 @@ async fn main() {
     };
     tokio::pin!(dali_hw);
 
-    let mut web_server = {
+    let web_server = {
         let mut web_conf = ServerConfig::new();
         web_conf = web_conf.port(1122);
         web_conf = web_conf.build_page(Box::new(move |req| decode_get_request(req, &sim_devices)));
-        match httpd::start(web_conf) {
+        match httpd::start(web_conf, cancel.cancelled()).await {
             Ok((server, _bound_ip, _bound_port)) => server.fuse(),
             Err(e) => {
                 eprintln!("Failed to start web server: {e}");
@@ -268,6 +290,7 @@ async fn main() {
     };
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
+    tokio::pin!(web_server);
     loop {
         #[rustfmt::skip]
         tokio::select! {
@@ -305,8 +328,9 @@ async fn main() {
     if !serial.is_terminated() {
         let _ = serial.await;
     }
+    /*
     if !dali_hw.is_terminated() {
         let _ = dali_hw.await;
-    }
+    }*/
     debug!("Exiting");
 }

@@ -17,6 +17,7 @@ use rand::RngExt;
 use serde_derive::Serialize;
 use std::cmp::{max, min};
 use std::convert::TryFrom;
+use std::ops::Range;
 use std::ops::RangeBounds;
 use std::ops::Sub;
 use std::sync::{Arc, RwLock};
@@ -54,29 +55,52 @@ const LEVEL_HIRES_SCALE: i16 = 1i16 << 7;
 pub struct GearState {
     pub powered: bool,
 
+    #[serde(rename = "targetLevel")]
     pub target_level: i16, // Scaled by 128
+    #[serde(rename = "lastActiveLevel")]
     pub last_active_level: u8,
+    #[serde(rename = "lastLightLevel")]
     pub last_light_level: u8,
+    #[serde(rename = "powerOnLevel")]
     pub power_on_level: u8,
+    #[serde(rename = "systemFailureLevel")]
     pub system_failure_level: u8,
+    #[serde(rename = "minLevel")]
     pub min_level: u8,
+    #[serde(rename = "maxLevel")]
     pub max_level: u8,
-    pub fade: u8, // bit 0-3: fade rate, bit 4-7: fade time
-    pub extended_fade_time: u8,
+    pub fade: u8,               // bit 0-3: fade rate, bit 4-7: fade time
+    pub extended_fade_time: u8, // bit 0-3: base, bit 4-6: multiplier
     pub short_address: u8,
+    #[serde(rename = "searchAddress")]
     pub search_address: u32,
+    #[serde(rename = "randomAddress")]
     pub random_address: u32,
     pub operating_mode: u8,
     #[serde(skip)]
     pub initialisation_state: InitialisationState,
     #[serde(skip)]
     pub write_enable_state: WriteEnableState,
+    /*
+    0 - controlGearFailure
+    1 - lampFailure
+    2 - lampOn
+    3 - limitError
+    4 - fadeRunning
+    5 - resetState
+    6 - shortAddress is MASK
+    7 - powerCycleSeen
+    */
     pub status: u8,
     pub gear_groups: u16,
     pub scenes: [u8; 16],
+    #[serde(rename = "DTR0")]
     pub dtr0: u8,
+    #[serde(rename = "DTR1")]
     pub dtr1: u8,
+    #[serde(rename = "DTR2")]
     pub dtr2: u8,
+    #[serde(rename = "PHM")]
     pub physical_minimum_level: u8,
 
     // Slope of actualLevel towards targetLevel, in steps/ms
@@ -100,7 +124,6 @@ impl GearState {
         let phm = 0x01;
         GearState {
             powered: true,
-
             target_level: 0xfe * LEVEL_HIRES_SCALE,
             last_active_level: 0xfe,
             last_light_level: 0xfe,
@@ -140,16 +163,12 @@ impl GearState {
                 i16::from(self.target_level)
             } else {
                 let millis_left = (self.fade_end_time - time).as_millis() as i64;
-                println!(
-                    "target: {}, slope: {}, left: {}",
-                    self.target_level, self.fade_slope, millis_left
-                );
-                dbg!(i16::try_from(
+                i16::try_from(
                     (self.target_level as i64)
                         - (self.fade_slope as i64 * millis_left
                             + (1 << (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT - 1))
-                            >> (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT))
-                ),)
+                            >> (FADE_SLOPE_SHIFT - LEVEL_HIRES_SHIFT)),
+                )
                 .unwrap()
             }
         } else {
@@ -292,6 +311,7 @@ fn stop_fade(dev: &mut GearState) {
     }
 }
 fn start_fade_time(dev: &mut GearState, new_target_level: u8) {
+    debug!("Start fade to {new_target_level}");
     if new_target_level == MASK {
         stop_fade(dev);
         return;
@@ -302,9 +322,7 @@ fn start_fade_time(dev: &mut GearState, new_target_level: u8) {
         // Use extended fade times
         if (dev.extended_fade_time & 0x70) == 0 || dev.extended_fade_time > 0x4f {
             // Extended fade is zero
-            dev.set_actual_level(
-                ((dev.target_level + LEVEL_HIRES_SCALE / 2) >> LEVEL_HIRES_SHIFT) as u8,
-            );
+            dev.set_actual_level(new_target_level);
             return;
         } else {
             // Extended fade time
@@ -486,14 +504,14 @@ fn level_cmd(dev: &mut GearState, cmd: u8, _flags: Flags) -> Option<DaliBusEvent
             if dev.initialisation_state == InitialisationState::DISABLED {
                 start_fade_time(dev, dev.max_level);
             } else {
-                todo!();
+                set_target_level(dev, dev.max_level);
             }
         }
         cmd_defs::RECALL_MIN_LEVEL_OPCODE_BYTE => {
             if dev.initialisation_state == InitialisationState::DISABLED {
-                start_fade_time(dev, dev.max_level);
+                start_fade_time(dev, dev.min_level);
             } else {
-                todo!();
+                set_target_level(dev, dev.min_level);
             }
         }
         cmd_defs::STEP_DOWN_AND_OFF_OPCODE_BYTE => {
@@ -527,12 +545,15 @@ fn set_scene_cmd(
     dev: &mut GearState,
     _addr: u8,
     cmd: u8,
-    _flags: Flags,
+    flags: Flags,
 ) -> Option<DaliBusEventType> {
-    if (cmd_defs::SET_SCENE_FIRST_OPCODE_BYTE..=cmd_defs::SET_SCENE_LAST_OPCODE_BYTE).contains(&cmd)
-    {
-        let scene = usize::from(cmd - cmd_defs::SET_SCENE_FIRST_OPCODE_BYTE);
-        dev.scenes[scene] = dev.dtr0;
+    if flags.send_twice() {
+        if (cmd_defs::SET_SCENE_FIRST_OPCODE_BYTE..=cmd_defs::SET_SCENE_LAST_OPCODE_BYTE)
+            .contains(&cmd)
+        {
+            let scene = usize::from(cmd - cmd_defs::SET_SCENE_FIRST_OPCODE_BYTE);
+            dev.scenes[scene] = dev.dtr0;
+        }
     }
     NO_REPLY
 }
@@ -540,14 +561,16 @@ fn remove_from_scene_cmd(
     dev: &mut GearState,
     _addr: u8,
     cmd: u8,
-    _flags: Flags,
+    flags: Flags,
 ) -> Option<DaliBusEventType> {
-    if (cmd_defs::REMOVE_FROM_SCENE_FIRST_OPCODE_BYTE
-        ..=cmd_defs::REMOVE_FROM_SCENE_LAST_OPCODE_BYTE)
-        .contains(&cmd)
-    {
-        let scene = usize::from(cmd - cmd_defs::REMOVE_FROM_SCENE_FIRST_OPCODE_BYTE);
-        dev.scenes[scene] = MASK;
+    if flags.send_twice() {
+        if (cmd_defs::REMOVE_FROM_SCENE_FIRST_OPCODE_BYTE
+            ..=cmd_defs::REMOVE_FROM_SCENE_LAST_OPCODE_BYTE)
+            .contains(&cmd)
+        {
+            let scene = usize::from(cmd - cmd_defs::REMOVE_FROM_SCENE_FIRST_OPCODE_BYTE);
+            dev.scenes[scene] = MASK;
+        }
     }
     NO_REPLY
 }
@@ -661,19 +684,34 @@ fn set_param_cmd(dev: &mut GearState, cmd: u8, flags: Flags) -> Option<DaliBusEv
     }
 }
 fn add_to_group_cmd(
-    _dev: &mut GearState,
+    dev: &mut GearState,
     _addr: u8,
-    _cmd: u8,
-    _flags: Flags,
+    cmd: u8,
+    flags: Flags,
 ) -> Option<DaliBusEventType> {
+    if flags.send_twice() {
+        if (cmd_defs::ADD_TO_GROUP_FIRST_OPCODE_BYTE..=cmd_defs::ADD_TO_GROUP_LAST_OPCODE_BYTE)
+            .contains(&cmd)
+        {
+            dev.gear_groups |= 1 << (cmd - cmd_defs::ADD_TO_GROUP_FIRST_OPCODE_BYTE);
+        }
+    }
     NO_REPLY
 }
 fn remove_from_group_cmd(
-    _dev: &mut GearState,
+    dev: &mut GearState,
     _addr: u8,
-    _cmd: u8,
-    _flags: Flags,
+    cmd: u8,
+    flags: Flags,
 ) -> Option<DaliBusEventType> {
+    if flags.send_twice() {
+        if (cmd_defs::REMOVE_FROM_GROUP_FIRST_OPCODE_BYTE
+            ..=cmd_defs::REMOVE_FROM_GROUP_LAST_OPCODE_BYTE)
+            .contains(&cmd)
+        {
+            dev.gear_groups &= !(1 << (cmd - cmd_defs::REMOVE_FROM_GROUP_FIRST_OPCODE_BYTE));
+        }
+    }
     NO_REPLY
 }
 fn memory_cmd(
@@ -857,8 +895,23 @@ where
     Ok(())
 }
 
+fn set_bit_range(value: &mut u8, new_value: u8, bits: Range<usize>) {
+    let mask = ((1 << (bits.end - bits.start)) - 1) << bits.start;
+
+    *value = (*value & !mask) | ((new_value << bits.start) & mask);
+}
+
+fn set_bit(bits: &mut u8, bit: u8, value: bool) {
+    let mask = 1 << bit;
+    if value {
+        *bits |= mask;
+    } else {
+        *bits &= !mask;
+    }
+}
+
 impl DaliSimDevice for DaliSimGear {
-    fn configure(&mut self, conf: &yaml_serde::value::Mapping) -> DynResult<()> {
+    fn configure(&mut self, conf: &yaml_serde::value::Mapping, index: usize) -> DynResult<()> {
         let mut state = self.state.write().unwrap();
         configure_variable_uint(
             conf,
@@ -867,7 +920,12 @@ impl DaliSimDevice for DaliSimGear {
             0..=0xffffff,
             0u32,
         )?;
-        configure_variable_uint(conf, "shortAddress", &mut state.short_address, 1..64, 1)?;
+        let mut short_address = 0u8;
+        configure_variable_uint(conf, "shortAddress", &mut short_address, 1..=64, 1)?;
+        if !((0..64).contains(&(short_address + index as u8))) {
+            return Err("End address out of bounds".into());
+        }
+        state.short_address = short_address + index as u8;
         configure_variable_uint(
             conf,
             "lastLightLevel",
@@ -875,6 +933,10 @@ impl DaliSimDevice for DaliSimGear {
             0..=255,
             0u8,
         )?;
+        let mut target_level = 0;
+        configure_variable_uint(conf, "targetLevel", &mut target_level, 0..255, 0)?;
+        set_target_level(&mut *state, target_level);
+
         configure_variable_uint(conf, "powerOnLevel", &mut state.power_on_level, 0..255, 0)?;
         configure_variable_uint(
             conf,
@@ -971,7 +1033,41 @@ impl DaliSimDevice for DaliSimGear {
     fn get_parameter(&self, name: &str) -> Result<String, ParameterError> {
         let state = self.state.read().unwrap();
         match name {
+            "actualLevel" => {
+                Ok(serde_json::to_string(&state.actual_level_at(Instant::now())).unwrap())
+            }
+            "targetLevel" => Ok(serde_json::to_string(&((state.target_level + 64) / 128)).unwrap()),
             "shortAddress" => Ok(serde_json::to_string(&(state.short_address + 1)).unwrap()),
+            "fadeTime" => Ok(serde_json::to_string(&(state.fade >> 4)).unwrap()),
+            "fadeRate" => Ok(serde_json::to_string(&(state.fade & 0x0f)).unwrap()),
+            "extendedFadeTimeBase" => {
+                Ok(serde_json::to_string(&(state.extended_fade_time & 0x0f)).unwrap())
+            }
+            "extendedFadeTimeMultiplier" => {
+                Ok(serde_json::to_string(&((state.extended_fade_time >> 4) & 0x07)).unwrap())
+            }
+            "initialisationState" => Ok(match state.initialisation_state {
+                InitialisationState::ENABLED => "ENABLED",
+                InitialisationState::DISABLED => "DISABLED",
+                InitialisationState::WITHDRAWN => "WITHDRAWN",
+            }
+            .to_string()),
+            "writeEnableState" => Ok(match state.write_enable_state {
+                WriteEnableState::ENABLED => "ENABLED",
+                WriteEnableState::DISABLED => "DISABLED",
+            }
+            .to_string()),
+
+            "controlGearFailure" => {
+                Ok(serde_json::to_string(&((state.status & 0x01) != 0)).unwrap())
+            }
+            "lampFailure" => Ok(serde_json::to_string(&((state.status & 0x02) != 0)).unwrap()),
+            "lampOn" => Ok(serde_json::to_string(&((state.status & 0x04) != 0)).unwrap()),
+            "limitError" => Ok(serde_json::to_string(&((state.status & 0x08) != 0)).unwrap()),
+            "fadeRunning" => Ok(serde_json::to_string(&((state.status & 0x10) != 0)).unwrap()),
+            "resetState" => Ok(serde_json::to_string(&((state.status & 0x20) != 0)).unwrap()),
+            "powerCycleSeen" => Ok(serde_json::to_string(&((state.status & 0x80) != 0)).unwrap()),
+
             n => match state.get_field(n) {
                 Ok(value) => Ok(value),
                 Err(FieldError::NotFound) => Err(ParameterError::NotFound),
@@ -993,6 +1089,84 @@ impl DaliSimDevice for DaliSimGear {
                 }
                 Err(_) => Err(ParameterError::InvalidValue),
             },
+            "fadeTime" => {
+                set_bit_range(
+                    &mut state.fade,
+                    serde_json::from_str(value).map_err(|_| ParameterError::InvalidValue)?,
+                    4..7,
+                );
+                Ok(())
+            }
+            "fadeRate" => {
+                set_bit_range(
+                    &mut state.fade,
+                    serde_json::from_str(value).map_err(|_| ParameterError::InvalidValue)?,
+                    0..4,
+                );
+                Ok(())
+            }
+            "extendedFadeTimeMultiplier" => {
+                set_bit_range(
+                    &mut state.extended_fade_time,
+                    serde_json::from_str(value).map_err(|_| ParameterError::InvalidValue)?,
+                    4..6,
+                );
+                Ok(())
+            }
+
+            "extendedFadeTimeBase" => {
+                set_bit_range(
+                    &mut state.extended_fade_time,
+                    serde_json::from_str(value).map_err(|_| ParameterError::InvalidValue)?,
+                    0..4,
+                );
+                Ok(())
+            }
+            "controlGearFailure" => {
+                set_bit(
+                    &mut state.status,
+                    0,
+                    serde_json::from_str::<bool>(value)
+                        .map_err(|_| ParameterError::InvalidValue)?,
+                );
+                Ok(())
+            }
+            "lampFailure" => {
+                set_bit(
+                    &mut state.status,
+                    1,
+                    serde_json::from_str::<bool>(value)
+                        .map_err(|_| ParameterError::InvalidValue)?,
+                );
+                Ok(())
+            }
+            "limitError" => {
+                set_bit(
+                    &mut state.status,
+                    4,
+                    serde_json::from_str::<bool>(value)
+                        .map_err(|_| ParameterError::InvalidValue)?,
+                );
+                Ok(())
+            }
+            "resetState" => {
+                set_bit(
+                    &mut state.status,
+                    5,
+                    serde_json::from_str::<bool>(value)
+                        .map_err(|_| ParameterError::InvalidValue)?,
+                );
+                Ok(())
+            }
+            "powerCycleSeen" => {
+                set_bit(
+                    &mut state.status,
+                    7,
+                    serde_json::from_str::<bool>(value)
+                        .map_err(|_| ParameterError::InvalidValue)?,
+                );
+                Ok(())
+            }
             n => match state.set_field(n, value.to_string()) {
                 Ok(()) => Ok(()),
                 Err(FieldError::NotFound) => Err(ParameterError::NotFound),
@@ -1039,10 +1213,6 @@ async fn device_thread(bus: DaliSimBusDevice, state: Arc<RwLock<GearState>>) {
                         let short_address = state.short_address;
                         state.current_time = bus.current_time();
                         check_timers(&mut state);
-                        debug!(
-                            "Gear {} received: {:02x} {:02x}",
-                            short_address, cmd[0], cmd[1]
-                        );
                         match cmd[0] >> 1 {
                             addr @ 0x00..=0x3f if addr == short_address => {
                                 device_cmd(&mut *state, cmd[0], cmd[1], flags)

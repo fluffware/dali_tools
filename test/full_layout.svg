@@ -1,0 +1,535 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="500"
+   height="500"
+   viewBox="0 0 132.29166 132.29167"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4 (e7c3feb100, 2024-10-09)"
+   sodipodi:docname="full_layout.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="1"
+     inkscape:cx="249.5"
+     inkscape:cy="250"
+     inkscape:window-width="1240"
+     inkscape:window-height="755"
+     inkscape:window-x="60"
+     inkscape:window-y="1"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:#000000;stroke-width:0.502708;stroke-linecap:round"
+       id="rect1"
+       width="132.29167"
+       height="132.29167"
+       x="0"
+       y="0"
+       rx="0.84879094"
+       ry="0.84879094" />
+    <g
+       id="g3"
+       transform="translate(4.6217697,-1.5368538)">
+      <g
+         id="g1"
+         transform="translate(-8.2501378,-1.9018386)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="4" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="5" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="6" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="7" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="8" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="1" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="2" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="3" />
+      </g>
+      <g
+         id="g2"
+         transform="translate(-8.2501378,14.320448)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19-4"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="12" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4-4"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="13" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6-4"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="14" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3-7"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="15" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15-6"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="16" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-31"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="9" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9-7"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="10" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1-5"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="11" />
+      </g>
+      <g
+         id="g2-7"
+         transform="translate(-8.2501378,30.542735)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19-8"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="20" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4-5"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="21" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6-7"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="22" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3-4"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="23" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15-1"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="24" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-8"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="17" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9-5"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="18" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1-9"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="19" />
+      </g>
+      <g
+         id="g2-8"
+         transform="translate(-8.2501378,46.765022)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19-3"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="28" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4-1"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="29" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6-8"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="30" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3-9"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="31" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15-64"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="32" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-33"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="25" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9-3"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="26" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1-8"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="27" />
+      </g>
+      <g
+         id="g2-88"
+         transform="translate(-8.2501378,62.987309)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19-9"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="36" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4-7"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="37" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6-76"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="38" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3-43"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="39" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15-0"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="40" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-30"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="33" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9-9"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="34" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1-2"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="35" />
+      </g>
+      <g
+         id="g2-9"
+         transform="translate(-8.2501378,95.431883)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19-46"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="52" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4-9"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="53" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6-2"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="54" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3-2"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="55" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15-4"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="56" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-7"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="49" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9-75"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="50" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1-4"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="51" />
+      </g>
+      <g
+         id="g2-93"
+         transform="translate(-8.2501378,111.65417)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19-6"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="60" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4-8"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="61" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6-0"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="62" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3-21"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="63" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15-05"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="64" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-11"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="57" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9-0"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="58" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1-85"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="59" />
+      </g>
+      <g
+         id="g2-2"
+         transform="translate(-8.2501378,79.209596)">
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-19-5"
+           cx="61.90741"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="44" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-4-86"
+           cx="77.640991"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="45" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-6-28"
+           cx="93.374573"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="46" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-3-47"
+           cx="109.10816"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="47" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-15-2"
+           cx="124.84174"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="48" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-40"
+           cx="14.706659"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="41" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-9-6"
+           cx="30.440243"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="42" />
+        <circle
+           style="fill:#ffffff;stroke-width:0.502708;stroke-linecap:round"
+           id="path1-59-1-29"
+           cx="46.173828"
+           cy="12.806521"
+           r="6.4565215"
+           data-dali-fill-intensity="43" />
+      </g>
+    </g>
+  </g>
+</svg>

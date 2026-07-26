@@ -5,16 +5,16 @@ function parse_rgb(s) {
     return [m[1],m[2],m[3]];
 }
 
-function send_variable_query(addrs, vars) {
-    let url = "/dyn/dali/device/?addr="+addrs.join(',')+ "&get="+vars.join(",");
+function send_variable_query(namess, vars) {
+    let url = "/dyn/dali/device/?name="+namess.join(',')+ "&get="+vars.join(",");
     //console.log(url)
     fetch(url)
 	.then(response => {
 	    if (response.status == 200) {
 		response.json().then(data => {
 		    //console.log(data)
-		    for ([addr,param] of Object.entries(data)) {
-			if (parseInt(addr) == parseInt(current_address_elem.value)) {
+		    for ([name,param] of Object.entries(data)) {
+			if (name == current_name_elem.value) {
 			    for ([var_name, var_value] of Object.entries(param)) {
 				let elems = gear_values[var_name]
 			    for (elem of elems) {
@@ -22,7 +22,7 @@ function send_variable_query(addrs, vars) {
 			    }
 			    }
 			}
-			let filled = gear_filled[parseInt(addr)]
+			let filled = gear_filled[name]
 			if (filled) {
 			    for (fill of filled) {
 				rgb = parse_rgb(fill.color)
@@ -44,8 +44,8 @@ function send_variable_query(addrs, vars) {
 	})
 }
 
-function send_variable_set(addr, variable, value) {
-    let url = "/dyn/dali/device/?addr="+addr+ "&set="+variable+":"+value
+function send_variable_set(name, variable, value) {
+    let url = "/dyn/dali/device/?name="+name+ "&set="+variable+":"+value
     //console.log(url)
     fetch(url)
 	.then(response => {
@@ -63,19 +63,19 @@ function send_variable_set(addr, variable, value) {
 }
 
 function dali_current_set(variable, value) {
-    send_variable_set(current_address_elem.value, variable, value)
+    send_variable_set(current_name_elem.value, variable, value)
 }
 
-let current_address_elem = null;
+let current_name_elem = null;
 function poll_vars() {
-    let addr = current_address_elem.value
-    send_variable_query([addr], Object.keys(gear_values))
+    let name = current_name_elem.value
+    send_variable_query([name], Object.keys(gear_values))
 }
 
 function poll_intensity() {
-    let addrs = Object.keys(gear_filled);
-    if (addrs.length > 0) {
-	send_variable_query(addrs, ["actualLevel"])
+    let names = Object.keys(gear_filled);
+    if (names.length > 0) {
+	send_variable_query(names, ["actualLevel"])
     }
 }
 
@@ -96,7 +96,7 @@ function push_map(map, index, value) {
 }
 
 function svg_elem_filled_clicked() {
-    current_address_elem.value = this.getAttribute("data-dali-fill-intensity");
+    current_name_elem.value = this.getAttribute("data-dali-fill-intensity");
 }
 
 var gear_filled = {}
@@ -111,9 +111,9 @@ function layout_file_changed() {
 	let svg = layoyt_doc.getElementsByTagName("svg")[0];
 	let filled = svg.querySelectorAll("[data-dali-fill-intensity]")
 	for (f of filled) {
-	    let addr = f.getAttribute("data-dali-fill-intensity");
+	    let name = f.getAttribute("data-dali-fill-intensity");
 	    console.log(f.style.fill)
-	    push_map(gear_filled, parseInt(addr), {elem: f, color: f.style.fill})
+	    push_map(gear_filled, name, {elem: f, color: f.style.fill})
 	    f.addEventListener("click", svg_elem_filled_clicked);
 	}
 	
@@ -132,7 +132,7 @@ function startup()
 	}
 	console.log(var_name)
     }
-    current_address_elem = document.getElementById("current_address")
+    current_name_elem = document.getElementById("current_name")
     let layout_file_elem = document.getElementById("layout_file");
     layout_file_elem.addEventListener("change", layout_file_changed);
 

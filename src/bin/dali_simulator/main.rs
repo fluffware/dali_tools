@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use clap::value_parser;
 use clap::{Arg, Command};
 use dali::drivers::driver::{DaliDriver, DaliFrame, OpenError};
 use dali::drivers::send_flags;
@@ -19,6 +20,7 @@ use log::error;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::File;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::signal;
@@ -36,10 +38,11 @@ fn bad_request(msg: &str) -> DynResult<Response<Full<Bytes>>> {
 
 fn decode_get_request(
     req: Request<Incoming>,
-    sim_devices: &Vec<Box<dyn DaliSimDevice>>,
+    sim_devices: &HashMap<String, Box<dyn DaliSimDevice>>,
 ) -> DynResult<Response<Full<Bytes>>> {
     if let Some(_) = req.uri().path().strip_prefix("/dyn/dali/device") {
         let mut addrs = HashSet::new();
+        let mut names = HashSet::new();
         let mut gets = HashSet::new();
         let mut sets = HashMap::new();
 
@@ -50,6 +53,11 @@ fn decode_get_request(
                     return bad_request("Missing '='");
                 };
                 match k {
+                    "name" => {
+                        for s in p.split(",") {
+                            names.insert(s);
+                        }
+                    }
                     "addr" => {
                         for s in p.split(",") {
                             let Ok(addr) = u8::from_str(s) else {
@@ -80,41 +88,36 @@ fn decode_get_request(
         let mut reply = String::from("{");
         let mut first_addr = true;
         // Go through all devices and set and get parameters
-        for dev in sim_devices {
-            if let Ok(Ok(dev_addr)) = dev.get_parameter("shortAddress").map(|v| u8::from_str(&v)) {
-                if addrs.contains(&dev_addr) {
-                    for (p, v) in &sets {
-                        match dev.set_parameter(p, v) {
-                            Ok(()) => {}
-                            Err(ParameterError::NotFound) => {
-                                return bad_request(&format!("No parameter named '{}' found", p));
-                            }
-                            Err(ParameterError::InvalidValue) => {
-                                return bad_request(&format!(
-                                    "Invalid parameter value for '{}'",
-                                    p
-                                ));
-                            }
+        for dev_name in names {
+            if let Some(dev) = sim_devices.get(dev_name) {
+                for (p, v) in &sets {
+                    match dev.set_parameter(p, v) {
+                        Ok(()) => {}
+                        Err(ParameterError::NotFound) => {
+                            return bad_request(&format!("No parameter named '{}' found", p));
+                        }
+                        Err(ParameterError::InvalidValue) => {
+                            return bad_request(&format!("Invalid parameter value for '{}'", p));
                         }
                     }
-                    if !first_addr {
+                }
+                if !first_addr {
+                    reply += ",";
+                }
+                first_addr = false;
+                reply += &format!("\"{}\":{{", dev_name);
+                let mut first_param = true;
+                for p in &gets {
+                    let Ok(v) = dev.get_parameter(p) else {
+                        return bad_request(&format!("No parameter named '{}' found", p));
+                    };
+                    if !first_param {
                         reply += ",";
                     }
-                    first_addr = false;
-                    reply += &format!("\"{}\":{{", dev_addr);
-                    let mut first_param = true;
-                    for p in &gets {
-                        let Ok(v) = dev.get_parameter(p) else {
-                            return bad_request(&format!("No parameter named '{}' found", p));
-                        };
-                        if !first_param {
-                            reply += ",";
-                        }
-                        first_param = false;
-                        reply += &format!("\"{}\":{}", p, v);
-                    }
-                    reply += "}";
+                    first_param = false;
+                    reply += &format!("\"{}\":{}", p, v);
                 }
+                reply += "}";
             }
         }
         reply += "}";
@@ -222,6 +225,20 @@ async fn main() {
                 .long("device")
                 .env("DALI_DEVICE")
                 .help("Select DALI-device"),
+        )
+        .arg(
+            Arg::new("HTTP_ADDRESS")
+                .long("http-address")
+                .value_parser(value_parser!(IpAddr))
+                .default_value("127.0.0.1")
+                .help("Bind HTTP-server to this address"),
+        )
+        .arg(
+            Arg::new("HTTP_PORT")
+                .value_parser(value_parser!(u16))
+                .default_value("1122")
+                .long("http-port")
+                .help("HTTP port"),
         );
     let matches = cli_cmd.get_matches();
     let conf_filename = matches.get_one::<String>("CONFIG").unwrap();
@@ -277,8 +294,11 @@ async fn main() {
     tokio::pin!(dali_hw);
 
     let web_server = {
+        let port = matches.get_one::<u16>("HTTP_PORT").unwrap();
+        let address = matches.get_one::<IpAddr>("HTTP_ADDRESS").unwrap();
         let mut web_conf = ServerConfig::new();
-        web_conf = web_conf.port(1122);
+        web_conf = web_conf.port(*port);
+        web_conf = web_conf.bind_addr(*address);
         web_conf = web_conf.build_page(Box::new(move |req| decode_get_request(req, &sim_devices)));
         match httpd::start(web_conf, cancel.cancelled()).await {
             Ok((server, _bound_ip, _bound_port)) => server.fuse(),

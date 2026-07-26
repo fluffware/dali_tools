@@ -13,9 +13,10 @@
   <body onload="startup()">
     <h1>Simulator</h1>
     <div id="device_info">
-      <label for="current_address">Current address:</label>
-      <input id="current_address" type="number" value="1" min="1" max="64"/>
+      <label for="current_name">Name:</label>
+      <input id="current_name" type="text"/>
       <table id="parameters">
+	<tr><td>shortAddress</td><td data-dali-gear-value="shortAddress"></td></tr>
 	<tr><td>actualLevel</td><td data-dali-gear-value="actualLevel"></td></tr>
 	<tr><td>targetLevel</td><td data-dali-gear-value="targetLevel"></td></tr>
 	<tr><td>minLevel</td><td data-dali-gear-value="minLevel"></td></tr>

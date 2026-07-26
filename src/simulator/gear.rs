@@ -53,6 +53,8 @@ const LEVEL_HIRES_SCALE: i16 = 1i16 << 7;
 #[derive(Serialize, FieldAccessJson)]
 #[serde(rename_all = "camelCase")]
 pub struct GearState {
+    pub name: String,
+
     pub powered: bool,
 
     #[serde(rename = "targetLevel")]
@@ -120,9 +122,10 @@ pub struct GearState {
 const FADE_SLOPE_SHIFT: i32 = 29;
 
 impl GearState {
-    pub fn new(random_address: u32, now: Instant) -> GearState {
+    pub fn new(name: String, random_address: u32, now: Instant) -> GearState {
         let phm = 0x01;
         GearState {
+            name,
             powered: true,
             target_level: 0xfe * LEVEL_HIRES_SCALE,
             last_active_level: 0xfe,
@@ -220,10 +223,10 @@ pub struct DaliSimGear {
 }
 
 impl DaliSimGear {
-    pub fn new() -> DaliSimGear {
+    pub fn new(name: String) -> DaliSimGear {
         let mut rng = rand::rng();
         let now = Instant::now();
-        let state = GearState::new(rng.random_range(0..0x1000000), now);
+        let state = GearState::new(name, rng.random_range(0..0x1000000), now);
 
         DaliSimGear {
             state: Arc::new(RwLock::new(state)),
@@ -860,8 +863,8 @@ fn special_cmd(dev: &mut GearState, cmd: u8, data: u8, flags: Flags) -> Option<D
         _ => NO_REPLY,
     }
 }
-fn device_init() -> Box<dyn DaliSimDevice> {
-    Box::new(DaliSimGear::new())
+fn device_init(name: String) -> Box<dyn DaliSimDevice> {
+    Box::new(DaliSimGear::new(name))
 }
 
 #[distributed_slice(DALI_SIMULATOR_DEVICES)]
@@ -920,12 +923,15 @@ impl DaliSimDevice for DaliSimGear {
             0..=0xffffff,
             0u32,
         )?;
+        let mut step = 1u8;
+        configure_variable_uint(conf, "shortAddressStep", &mut step, 1..=64, 0)?;
         let mut short_address = 0u8;
         configure_variable_uint(conf, "shortAddress", &mut short_address, 1..=64, 1)?;
-        if !((0..64).contains(&(short_address + index as u8))) {
+        short_address += step * index as u8;
+        if !((0..64).contains(&(short_address))) {
             return Err("End address out of bounds".into());
         }
-        state.short_address = short_address + index as u8;
+        state.short_address = short_address;
         configure_variable_uint(
             conf,
             "lastLightLevel",
@@ -1259,7 +1265,7 @@ fn check_fade(state: &mut GearState, target_level: u8, now: Instant, duration: D
 #[test]
 fn test_fade() {
     let mut now = Instant::now();
-    let mut state = GearState::new(0xffffff, now);
+    let mut state = GearState::new("BAR01".to_string(), 0xffffff, now);
     state.target_level = 78 * LEVEL_HIRES_SCALE;
     check_fade(&mut state, 254, now, Duration::from_millis(100));
 

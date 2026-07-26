@@ -6,7 +6,7 @@ type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 pub struct DaliSimDeviceEntry {
     pub name: &'static str,
-    pub init: fn() -> Box<dyn DaliSimDevice>,
+    pub init: fn(name: String) -> Box<dyn DaliSimDevice>,
 }
 #[distributed_slice]
 pub static DALI_SIMULATOR_DEVICES: [DaliSimDeviceEntry];

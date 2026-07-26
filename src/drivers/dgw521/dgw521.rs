@@ -153,6 +153,19 @@ impl Sub<SlotIndex> for SlotIndex {
     }
 }
 
+fn decode_modbus_error<T>(
+    res: Result<Result<Result<T, ExceptionCode>, tokio_modbus::Error>, tokio::time::error::Elapsed>,
+) -> String {
+    match res {
+        Ok(Ok(Err(exception_code))) => format!("Modbus exception {}", exception_code),
+        Ok(Err(e)) => {
+            format!("Modbus error {}", e)
+        }
+        Err(_e) => "Modbus timeout".to_string(),
+        Ok(Ok(Ok(_))) => "Success".to_string(),
+    }
+}
+
 struct SendState {
     pending: [Option<DALIreq>; 8],
     oldest_slot: SlotIndex,
@@ -176,21 +189,18 @@ impl SendState {
             )
             .await
             {
-                Ok(Ok(regs)) => regs[0],
-                Ok(Err(_e)) => {
-                    continue 'sending;
-                }
-
-                Err(_e) => {
-                    warn!("Modbus timeout");
+                Ok(Ok(Ok(regs))) => regs[0],
+                e => {
+                    warn!("Polling status mask: {}", decode_modbus_error(e));
                     continue 'sending;
                 }
             };
-            /*            println!(
-                            "Mask: {:08b}, Oldest slot: {:?}, Next slot: {:?}",
-                            mask, self.oldest_slot, self.next_slot
-                        );
-            */
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            debug!(
+                "Mask: {:08b}, Oldest slot: {:?}, Next slot: {:?}",
+                mask, self.oldest_slot, self.next_slot
+            );
+
             // Handle slots that are finished
             while self.next_slot - self.oldest_slot != 0 && (self.oldest_slot.mask() & mask) != 0 {
                 let slot = self.oldest_slot.slot();
@@ -206,17 +216,14 @@ impl SendState {
                 )
                 .await
                 {
-                    Ok(Ok(regs)) => regs[0],
-                    Ok(Err(e)) => {
-                        send_driver_error(req, e);
-                        continue 'sending;
-                    }
-                    Err(e) => {
-                        send_driver_error(req, e);
-                        warn!("Modbus timeout");
+                    Ok(Ok(Ok(regs))) => regs[0],
+                    e => {
+                        warn!("Reading status: {}", decode_modbus_error(e));
                         continue 'sending;
                     }
                 };
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                debug!("res: 0x{:04x}", res);
                 req.reply
                     .send(match res & 0xff {
                         mb::CMD_STATUS_EXECUTING | mb::CMD_STATUS_PENDING => {
@@ -232,7 +239,9 @@ impl SendState {
                         mb::CMD_STATUS_INVALID_DATA => DaliSendResult::Framing,
                         mb::CMD_STATUS_EARLY | mb::CMD_STATUS_TIMEOUT => DaliSendResult::Timeout,
                         mb::CMD_STATUS_ANSWER => DaliSendResult::Answer((res >> 8) as u8),
-                        _ => DaliSendResult::DriverError("Unknown status".into()),
+                        s => DaliSendResult::DriverError(
+                            format!("Unknown status: 0x{:02x}", s).into(),
+                        ),
                     })
                     .unwrap();
             }
@@ -252,7 +261,11 @@ impl SendState {
                     )
                     .await
                     {
-                        Ok(Ok(())) => {}
+                        Ok(Ok(Ok(()))) => {}
+                        Ok(Ok(Err(e))) => {
+                            send_driver_error(req, e);
+                            continue 'sending;
+                        }
                         Ok(Err(e)) => {
                             send_driver_error(req, e);
                             continue 'sending;
@@ -263,6 +276,7 @@ impl SendState {
                         }
                     };
                     self.pending[self.next_slot.slot()] = Some(req);
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                     //println!("Sent {}", next_slot);
                 } else {
                     req.reply
@@ -284,7 +298,6 @@ impl SendState {
             if self.next_slot - self.oldest_slot == 0 {
                 break 'sending;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         debug!("Send done");
     }
@@ -312,14 +325,9 @@ impl MonitorState {
         )
         .await
         {
-            Ok(Ok(regs)) => regs[0],
-            Ok(Err(e)) => {
-                warn!("Modbus error: {}", e);
-                return;
-            }
-
-            Err(_e) => {
-                warn!("Modbus timeout");
+            Ok(Ok(Ok(regs))) => regs[0],
+            e => {
+                warn!("Reading buffer index: {}", decode_modbus_error(e));
                 return;
             }
         }
@@ -341,7 +349,7 @@ impl MonitorState {
             )
             .await
             {
-                Ok(Ok(regs)) => {
+                Ok(Ok(Ok(regs))) => {
                     for i in 0..read_len {
                         let info = regs[(i * 2 + 1) as usize];
                         let rel_ts = info >> 6;
@@ -364,13 +372,8 @@ impl MonitorState {
                         });
                     }
                 }
-                Ok(Err(e)) => {
-                    warn!("Modbus error: {}", e);
-                    return;
-                }
-
-                Err(_e) => {
-                    warn!("Modbus timeout");
+                e => {
+                    warn!("Reading buffer: {}", decode_modbus_error(e));
                     return;
                 }
             };

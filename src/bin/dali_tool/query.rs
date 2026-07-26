@@ -3,6 +3,7 @@ use clap::{Arg, ArgMatches, Command};
 use dali_tools::common::address::Short;
 use dali_tools::common::commands::Commands;
 use dali_tools::control::commands_103::Commands103;
+use dali_tools::drivers::driver::DaliSendResult;
 use dali_tools::gear::commands_102::Commands102;
 use dali_tools::utils::device_info;
 use dali_tools::utils::memory_banks;
@@ -40,8 +41,18 @@ fn execute<'a>(
             } else {
                 let mut commands = Commands102::new(&mut *ctxt.driver);
                 let long = commands.query_random_address(*addr).await;
-                if let Ok(long) = long {
-                    println!("Long address: 0x{:06x}", long);
+                match long {
+                    Ok(long) => {
+                        println!("Long address: 0x{:06x}", long);
+                    }
+                    Err(DaliSendResult::Timeout) => {}
+                    Err(e) => {
+                        return Err(format!(
+                            "Failed to read long address for short address {}: {}",
+                            *addr, e
+                        )
+                        .into());
+                    }
                 }
                 if try_all || long.is_ok() {
                     let info = match device_info::read_gear_info(&mut *ctxt.driver, *addr).await {

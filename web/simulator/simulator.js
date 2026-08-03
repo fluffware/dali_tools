@@ -5,6 +5,19 @@ function parse_rgb(s) {
     return [m[1],m[2],m[3]];
 }
 
+const ka = Math.log(10)*3/253;
+const kb = Math.log(10)*762/253;
+function step_to_power(step) {
+    return Math.exp(step*ka-kb);
+}
+function power_to_sRGB(p) {
+    if (p < (0.0405/12.92)) {
+	return 12.92*p;
+    } else {
+	return 1.055*Math.pow(p,1/2.4)-0.055;
+    }
+}
+
 function send_variable_query(namess, vars) {
     let url = "/dyn/dali/device/?name="+namess.join(',')+ "&get="+vars.join(",");
     //console.log(url)
@@ -26,13 +39,21 @@ function send_variable_query(namess, vars) {
 			if (filled) {
 			    for (fill of filled) {
 				rgb = parse_rgb(fill.color)
+				let p = step_to_power(param["actualLevel"]);
+				fill.power[fill.component] = p;
+				let m = Math.max(...fill.power.slice(0,3)) 
+				    + fill.power[3]
+				let scale = 1
+				if (m > 1) {
+				    scale = 1/m
+				}
 				for (let i =0; i < 3; i++) {
-				    rgb[i] = (rgb[i] *  param["actualLevel"])/254;
+				    rgb[i] = rgb[i] *  power_to_sRGB((fill.power[i] + fill.power[3])*scale);
 				}
 				//console.log(`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`)
 				fill.elem.style.fill=`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
 			    }
-			}
+			    }
 		    }
 		})
 	    } else {
@@ -102,6 +123,7 @@ function svg_elem_filled_clicked() {
 var gear_filled = {}
 
 function layout_file_changed() {
+    gear_filled = {}
     const file = this.files[0];
     console.log("File: "+file.name+" is "+file.type);
     let frame = document.getElementById("layout_frame")
@@ -113,8 +135,22 @@ function layout_file_changed() {
 	for (f of filled) {
 	    let name = f.getAttribute("data-dali-fill-intensity");
 	    console.log(f.style.fill)
-	    push_map(gear_filled, name, {elem: f, color: f.style.fill})
+	    push_map(gear_filled, name, {elem: f, color: f.style.fill,
+					 component:3, power: [0,0,0,0]})
 	    f.addEventListener("click", svg_elem_filled_clicked);
+	}
+	filled = svg.querySelectorAll("[data-dali-fill-rgbw]")
+	for (f of filled) {
+	    let names = f.getAttribute("data-dali-fill-rgbw");
+	    console.log(f.style.fill)
+	    let components = names.split(",")
+	    let rgbw_power =[0,0,0,0]
+	    for (let i=0; i < 4; i++) {
+		if (components[i] == null) break
+		push_map(gear_filled, components[i],
+			 {elem: f, color: f.style.fill, component: i,
+			      power: rgbw_power})
+	    }
 	}
 	
     }, 1000)

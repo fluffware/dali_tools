@@ -49,6 +49,18 @@ where
     let Some(dali_conf) = conf.get("dali") else {
         return Err("No 'dali' tag found in configuration file".into());
     };
+    let templates = {
+        if let Some(t) = dali_conf.get("template") {
+            if let Some(m) = t.as_mapping() {
+                Some(m)
+            } else {
+                return Err("'template' is not a mapping".into());
+            }
+        } else {
+            None
+        }
+    };
+
     let Some(device_conf) = dali_conf.get("devices") else {
         return Err("No 'devices' tag found in configuration file".into());
     };
@@ -62,6 +74,23 @@ where
         let yaml_serde::Value::Mapping(conf) = device else {
             return Err("Item in device list is not a mapping".into());
         };
+        let mut conf = conf.clone();
+        if let Some(template_name) = conf.get("template").and_then(|v| v.as_str()) {
+            if let Some(templates) = templates {
+                let Some(replacements) = templates.get(template_name) else {
+                    return Err(format!("No template '{}' found", template_name).into());
+                };
+                if let Some(replacements) = replacements.as_mapping() {
+                    for (name, value) in replacements {
+                        if !conf.contains_key(name) {
+                            conf.insert(name.clone(), value.clone());
+                        }
+                    }
+                } else {
+                    return Err(format!("Template '{}' is not a mapping", template_name).into());
+                }
+            }
+        }
         if let Some(device_type) = conf.get("type").and_then(|v| v.as_str()) {
             debug!("Type: {}", device_type);
             let Some(dev_entry) = DALI_SIMULATOR_DEVICES
@@ -79,7 +108,7 @@ where
                 let dev_name = label_offset(base_name, index);
 
                 let mut device = (dev_entry.init)(dev_name.clone());
-                device.configure(conf, index)?;
+                device.configure(&conf, index)?;
                 device.start(DaliSimBusDevice::new(bus.clone(), sched.new_task()))?;
                 devices.insert(dev_name, device);
             }

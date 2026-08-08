@@ -727,7 +727,7 @@ impl DecoderState {
         } else {
             let value = ((u16::from(pkt[1]) & 0x03) << 8) | u16::from(pkt[2]);
             str = "(".to_string()
-                + &decode_event_source(&pkt[0..1].try_into().unwrap())
+                + &decode_event_source(&pkt[0..2].try_into().unwrap())
                 + "): "
                 + &format!("{} (0x{:03x})", value, value);
         }

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use clap::value_parser;
 use clap::{Arg, Command};
-use dali::drivers::driver::{DaliDriver, DaliFrame, OpenError};
+use dali::drivers::driver::{DaliBusEventType, DaliDriver, DaliFrame, OpenError};
 use dali::drivers::send_flags;
 use dali::httpd::{self, ServerConfig};
 use dali::simulator;
@@ -181,19 +181,33 @@ async fn dali_listener(
 			return Ok(())
 		    }
 		    DaliSimBusDeviceEvent::Message(msg) => {
-			if let Ok(frame) = DaliFrame::try_from(&msg.event_type)  && let Some(start) = msg.start {
-
-			    let delay = match frame {
-				DaliFrame::Frame8(_) => timing::REPLY_DELAY,
-				DaliFrame::Frame16(_) |
-				DaliFrame::Frame24(_) |
-				DaliFrame::Frame25(_) => {
-				    timing::send_delay(1,false)
-				}
-			    };
-			    debug!("Delayed {:?}",start - delay);
-			    tokio::time::sleep_until((start - delay).into()).await;
-			    driver.send_frame(frame,send_flags::Flags::Priority(0)).await;
+			match msg.event_type {
+			    DaliBusEventType::FramingError => {
+				log::debug!("Framing error");
+				driver.send_frame(DaliFrame::Frame8(0),
+						  send_flags::Flags::Priority(0)
+						  | send_flags::Flags::Invalid(true)).await;
+			    }
+			    event_type => {
+				if let Ok(frame) = DaliFrame::try_from(&event_type)
+				    && let Some(start) = msg.start {
+					let mut priority = send_flags::Flags::Priority(5);
+					let delay = match frame {
+					    DaliFrame::Frame8(_) => {
+						priority = send_flags::Flags::Priority(0);
+						timing::REPLY_DELAY
+					    }
+					    DaliFrame::Frame16(_) |
+					    DaliFrame::Frame24(_) |
+					    DaliFrame::Frame25(_) => {
+						timing::send_delay(1,false)
+					    }
+					};
+					debug!("Delayed {:?}",start - delay);
+					tokio::time::sleep_until((start - delay).into()).await;
+					driver.send_frame(frame,priority).await;
+				    }
+			    }
 			}
 		    }
 		    DaliSimBusDeviceEvent::Timeout => {

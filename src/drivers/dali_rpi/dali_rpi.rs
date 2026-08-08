@@ -86,6 +86,7 @@ async fn driver_thread(
     let mut next_seq = 1u8;
     let mut current_req = None;
     loop {
+        #[rustfmt::skip]
         select! {
             req = recv.recv(), if current_req.is_none() => {
                 //println!("Req: {:?}",req);
@@ -93,9 +94,15 @@ async fn driver_thread(
                     Some(req) => {
                         let mut bytes = [next_seq,
                                          (if req.cmd.flags.expect_answer() {0b1} else {0})
-                                         | (if req.cmd.flags.send_twice() {0b10} else {0}),
+                                         | (if req.cmd.flags.send_twice() {0b10} else {0})
+					 | (if let DaliFrame::Frame8(_) =req.cmd.data 
+					    {0b100} else {0}),
                                          req.cmd.flags.priority() as u8 | (2 << 3),
-                                         req.cmd.data.bit_length() as u8,
+                                         if req.cmd.flags.invalid() {
+					     0u8
+					 } else {
+					     req.cmd.data.bit_length() as u8
+					 },
                                          0,0,0,0];
                         match  req.cmd.data {
                             DaliFrame::Frame8(d) => bytes[4] = d,
@@ -113,6 +120,7 @@ async fn driver_thread(
                                 continue;
                             }
                         }
+			//log::debug!("Raw packet to DALI_RPI: {:x?}", bytes);
                         if let Err(e) = serial.write(&bytes).await {
                             req.reply.send(DaliSendResult:: DriverError(
                                 format!("Failed to write to serial device: {}",e).into())).unwrap();
@@ -137,7 +145,7 @@ async fn driver_thread(
                 }
 
             }, if req_timeout.is_some() => {
-                println!("Timedout");
+                log::debug!("Timedout");
 
                 if let Some((_seq, req)) = current_req.take() {
                     req.reply.send(DaliSendResult::Timeout).unwrap();
@@ -155,15 +163,18 @@ async fn driver_thread(
                         }
                         ser_rx_pos += n;
                         while ser_rx_pos >= 8 {
-                            //println!("Reply: {:?}", &ser_rx_buf[0..8]);
-                            if let Some((seqno, _)) = &current_req && *seqno == ser_rx_buf[0] {
+                            //log::debug!("Reply: {:?}", &ser_rx_buf[0..8]);
+                            if let Some((seqno, _)) = current_req {
                                 let (_,req) = current_req.take().unwrap();
                                 let result = match ser_rx_buf[1] {
-                                    2 => Some(DaliSendResult::Ok),
+                                    2 if seqno == ser_rx_buf[0] => Some(DaliSendResult::Ok),
                                     3 => Some(DaliSendResult::Answer(ser_rx_buf[4])),
+				    6 => Some(DaliSendResult::Framing),
                                     10 => Some(DaliSendResult::Timeout),
+				    11 => Some(DaliSendResult::DriverError("Bus high, when driven low".into())),
                                     _ => None,
                                 };
+				//log::debug!("Result: {:?}",result); 
                                 if let Some(result) = result {
                                     req.reply.send(result).unwrap();
                                     req_timeout = None;

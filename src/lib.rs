@@ -14,6 +14,7 @@ pub mod utils {
     pub mod long_address;
     pub mod memory_banks;
     pub mod parse_address;
+    pub mod parse_config;
 }
 
 pub mod drivers;

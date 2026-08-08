@@ -1,6 +1,6 @@
 use crate::simulator::sim_bus::DaliSimBusDevice;
+use crate::utils::parse_config::ConfigureGear;
 use linkme::distributed_slice;
-use yaml_serde::value::Mapping;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -28,11 +28,10 @@ impl std::fmt::Display for ParameterError {
     }
 }
 
-pub trait DaliSimDevice: Send {
+pub trait DaliSimDevice: ConfigureGear + Send {
     /* If index > 0 then a single configuration is repeated for more than one
     device. Adjust parameters (e.g. shorAddress) accordingly.
     */
-    fn configure(&mut self, conf: &Mapping, index: usize) -> DynResult<()>;
     /// Called when the device is connected to a bus
     fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()>;
     /// Called when disconnected from the bus

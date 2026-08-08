@@ -12,22 +12,18 @@ use dali::gear::cmd_defs as cmd;
 use dali::gear::commands_102::Commands102;
 //use dali::gear::fade::{FadeRate, FadeTime};
 use dali::utils::address_assignment::program_short_addresses;
+use dali::utils::parse_config::{self, ConfigureGear, CreateGear, DynResult};
 use dali_tools as dali;
 use dali_tools::common::driver_commands::DriverCommands;
 use log::debug;
-use serde::de::MapAccess;
-use serde::de::Visitor;
-use serde::de::{Deserialize, Deserializer};
-use serde_derive::Deserialize;
 use std::future;
 use std::io::Read;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use yaml_serde;
 
 #[derive(Debug)]
 pub enum Error {
-    Yaml(yaml_serde::Error),
+    ConfigurationError(String),
     InvalidGearId,
     InvalidConfigurartionId,
 }
@@ -37,82 +33,47 @@ impl std::error::Error for Error {}
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Yaml(e) => e.fmt(f),
+            Self::ConfigurationError(e) => e.fmt(f),
             Self::InvalidGearId => write!(f, "Invalid gear ID"),
             Self::InvalidConfigurartionId => write!(f, "Invalid configuration ID"),
         }
     }
 }
 
-impl From<yaml_serde::Error> for Error {
-    fn from(err: yaml_serde::Error) -> Error {
-        Self::Yaml(err)
-    }
-}
-fn deserialize_short_addr<'de, D>(deserializer: D) -> Result<Short, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let a = Deserialize::deserialize(deserializer)?;
-    Ok(Short::new(a))
-}
-
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 struct DaliGearConfiguration {
-    #[serde(skip)]
     label: String,
-    #[serde(deserialize_with = "deserialize_short_addr")]
-    address: Short,
+    address: Option<Short>,
     //group: Option<u8>,
     //fade_time: Option<FadeTime>,
     //fade_rate: Option<u8>,
 }
 
-struct GearConfVisitor {}
-
-impl GearConfVisitor {
-    fn new() -> Self {
-        Self {}
-    }
-}
-impl<'de> Visitor<'de> for GearConfVisitor {
-    type Value = VecDaliGearConfiguration;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(formatter, "a gear configuration")
-    }
-
-    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        let mut conf = Vec::new();
-        while let Some((key, mut value)) = map.next_entry::<String, DaliGearConfiguration>()? {
-            value.label = key;
-            conf.push(value);
-        }
-        debug!("{:?}", conf);
-        Ok(VecDaliGearConfiguration(conf))
+impl ConfigureGear for DaliGearConfiguration {
+    fn conf_short_address(&mut self, addr_or_mask: Option<Short>) {
+        self.address = addr_or_mask;
     }
 }
 
-struct VecDaliGearConfiguration(Vec<DaliGearConfiguration>);
-
-impl<'de> Deserialize<'de> for VecDaliGearConfiguration {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let visitor = GearConfVisitor::new();
-        deserializer.deserialize_map(visitor)
-    }
-}
-
-#[derive(Deserialize)]
 struct ConfigFile {
-    dali: VecDaliGearConfiguration, // (ConfigurationId - 1) indexes this vector
+    dali: Vec<DaliGearConfiguration>, // (ConfigurationId - 1) indexes this vector
 }
 
+impl Default for ConfigFile {
+    fn default() -> Self {
+        Self { dali: Vec::new() }
+    }
+}
+impl CreateGear for ConfigFile {
+    fn new_gear(&mut self, name: &str, _gear_type: &str) -> DynResult<&mut dyn ConfigureGear> {
+        let gear_conf = DaliGearConfiguration {
+            label: name.to_string(),
+            address: None,
+        };
+        let device = self.dali.push_mut(gear_conf);
+        Ok(device)
+    }
+}
 pub struct DaliConfigurationDriver {
     hw_driver: Arc<Mutex<Box<dyn DaliDriver>>>,
     low_level: u8,
@@ -136,18 +97,21 @@ impl DaliConfigurationDriver {
     }*/
 
     pub fn read_config<R: Read>(&mut self, reader: R) -> Result<(), Error> {
-        self.conf_file = Some(yaml_serde::from_reader(reader)?);
+        let mut conf_file = ConfigFile::default();
+        parse_config::parse_config(reader, &mut conf_file)
+            .map_err(|e| Error::ConfigurationError(e.to_string()))?;
+        self.conf_file = Some(conf_file);
         Ok(())
     }
 
     fn get_conf(&self, id: &ConfigurationId) -> Result<&DaliGearConfiguration, Error> {
         let index = (Into::<u16>::into(id.clone()) - 1) as usize;
         if let Some(conf_file) = &self.conf_file {
-            if index >= conf_file.dali.0.len() {
+            if index >= conf_file.dali.len() {
                 debug!("Index {}", index);
                 return Err(Error::InvalidConfigurartionId);
             }
-            Ok(&conf_file.dali.0[index])
+            Ok(&conf_file.dali[index])
         } else {
             Err(Error::InvalidConfigurartionId)
         }
@@ -247,10 +211,10 @@ impl ConfigurationDriver for DaliConfigurationDriver {
     fn configurations(&self) -> Vec<ConfigurationInfo> {
         let mut confs = Vec::new();
         if let Some(conf_file) = &self.conf_file {
-            for (index, c) in conf_file.dali.0.iter().enumerate() {
+            for (index, c) in conf_file.dali.iter().enumerate() {
                 confs.push(ConfigurationInfo {
                     id: ConfigurationId::try_from(index as u16 + 1).unwrap(),
-                    label: format!("{} ({})", c.label, c.address.to_string()),
+                    label: format!("{} ({})", c.label, c.address.unwrap().to_string()),
                 });
             }
         } else {
@@ -281,12 +245,12 @@ impl ConfigurationDriver for DaliConfigurationDriver {
             };
             swaps.push((
                 Short::new((Into::<u16>::into(g.id.clone()) - 1) as u8),
-                conf.address,
+                conf.address.unwrap(),
             ));
             remap.push(GearRemap {
                 old: g.id.clone(),
                 new: GearInfo {
-                    id: GearId::try_from(conf.address.value() as u16 + 1).unwrap(),
+                    id: GearId::try_from(conf.address.unwrap().value() as u16 + 1).unwrap(),
                     label: conf.label.clone(),
                     conf: Some(g.conf.clone()),
                 },

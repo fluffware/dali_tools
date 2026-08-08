@@ -3,12 +3,14 @@ use super::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent, DaliSimBusEvent};
 use super::timing::{
     FRAME_8_DURATION, FRAME_16_DURATION, INIT_TIMEOUT, REPLY_DELAY, SEND_TWICE_DURATION,
 };
+use crate::common::address::{Long, Short};
 use crate::common::defs::MASK;
 use crate::drivers::driver::DaliBusEventType;
 use crate::drivers::send_flags::Flags;
 use crate::gear::cmd_defs;
 use crate::gear::{device_type, light_source, status};
 use crate::simulator::device::ParameterError;
+use crate::utils::parse_config::ConfigureGear;
 use field_access_json::{Error as FieldError, FieldAccessJson};
 use field_access_json_derive::FieldAccessJson;
 use linkme::distributed_slice;
@@ -18,8 +20,6 @@ use serde_derive::Serialize;
 use std::cmp::{max, min};
 use std::convert::TryFrom;
 use std::ops::Range;
-use std::ops::RangeBounds;
-use std::ops::Sub;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::time::Instant;
@@ -28,12 +28,6 @@ use tokio::task::JoinHandle;
 extern crate rand;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-fn boxed_err<E>(e: E) -> Box<dyn std::error::Error + Send + Sync>
-where
-    E: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    Into::<Box<dyn std::error::Error + Send + Sync>>::into(e)
-}
 
 #[derive(PartialEq)]
 pub enum InitialisationState {
@@ -873,31 +867,6 @@ static DALI_SIMULATOR_DEVICE: DaliSimDeviceEntry = DaliSimDeviceEntry {
     init: device_init,
 };
 
-fn configure_variable_uint<T, R>(
-    conf: &yaml_serde::value::Mapping,
-    name: &str,
-    var: &mut T,
-    range: R,
-    offset: T,
-) -> DynResult<()>
-where
-    T: Copy + TryFrom<u64> + Sub<Output = T>,
-    R: RangeBounds<u64>,
-    <T as TryFrom<u64>>::Error: std::error::Error + Send + Sync + 'static,
-{
-    if let Some(value) = conf.get(name) {
-        let conf_value: u64 = value.as_u64().ok_or_else(|| {
-            boxed_err(format!("Value for '{}' is not an unsigned integer", name).as_str())
-        })?;
-        if !range.contains(&conf_value) {
-            return Err(boxed_err(format!("Value for '{}' is out of range", name)));
-        }
-        let var_value: T = conf_value.try_into()?;
-        *var = var_value - offset;
-    }
-    Ok(())
-}
-
 fn set_bit_range(value: &mut u8, new_value: u8, bits: Range<usize>) {
     let mask = ((1 << (bits.end - bits.start)) - 1) << bits.start;
 
@@ -912,8 +881,64 @@ fn set_bit(bits: &mut u8, bit: u8, value: bool) {
         *bits &= !mask;
     }
 }
-
+impl ConfigureGear for DaliSimGear {
+    fn conf_random_address(&mut self, addr: Long) {
+        self.state.write().unwrap().random_address = addr;
+    }
+    fn conf_short_address(&mut self, addr_or_mask: Option<Short>) {
+        self.state.write().unwrap().short_address = if let Some(addr) = addr_or_mask {
+            addr.value()
+        } else {
+            MASK
+        };
+    }
+    fn conf_last_light_level(&mut self, level: u8) {
+        self.state.write().unwrap().last_light_level = level
+    }
+    fn conf_target_level(&mut self, level: u8) {
+        set_target_level(&mut *self.state.write().unwrap(), level);
+    }
+    fn conf_power_on_level(&mut self, level: u8) {
+        self.state.write().unwrap().power_on_level = level
+    }
+    fn conf_system_failure_level(&mut self, level: u8) {
+        self.state.write().unwrap().system_failure_level = level
+    }
+    fn conf_min_level(&mut self, level: u8) {
+        self.state.write().unwrap().min_level = level
+    }
+    fn conf_max_level(&mut self, level: u8) {
+        self.state.write().unwrap().max_level = level
+    }
+    fn conf_fade_time(&mut self, time: u8) {
+        let mut state = self.state.write().unwrap();
+        state.fade = (state.fade & 0x0f) | (time & 0x0f) << 4;
+    }
+    fn conf_fade_rate(&mut self, rate: u8) {
+        let mut state = self.state.write().unwrap();
+        state.fade = (state.fade & 0xf0) | (rate & 0x0f);
+    }
+    fn conf_extended_fade_time_base(&mut self, base: u8) {
+        let mut state = self.state.write().unwrap();
+        state.extended_fade_time = (state.extended_fade_time & 0xf0) | (base as u8 & 0x0f);
+    }
+    fn conf_extended_fade_time_multiplier(&mut self, multiplier: u8) {
+        let mut state = self.state.write().unwrap();
+        state.extended_fade_time =
+            (state.extended_fade_time & 0x0f) | (multiplier as u8 & 0x07) << 4;
+    }
+    fn conf_gear_groups(&mut self, groups: u16) {
+        self.state.write().unwrap().gear_groups = groups
+    }
+    fn conf_scenes(&mut self, map: &[(u8, u8)]) {
+        let mut state = self.state.write().unwrap();
+        for (index, level) in map {
+            state.scenes[*index as usize] = *level;
+        }
+    } // (scene number (0 based), scene level)
+}
 impl DaliSimDevice for DaliSimGear {
+    /*
     fn configure(&mut self, conf: &yaml_serde::value::Mapping, index: usize) -> DynResult<()> {
         let mut state = self.state.write().unwrap();
         configure_variable_uint(
@@ -925,11 +950,13 @@ impl DaliSimDevice for DaliSimGear {
         )?;
         let mut step = 1u8;
         configure_variable_uint(conf, "shortAddressStep", &mut step, 1..=64, 0)?;
-        let mut short_address = 0u8;
+        let mut short_address = MASK;
         configure_variable_uint(conf, "shortAddress", &mut short_address, 1..=64, 1)?;
-        short_address += step * index as u8;
-        if !((0..64).contains(&(short_address))) {
-            return Err("End address out of bounds".into());
+        if short_address != MASK {
+            short_address += step * index as u8;
+            if !((0..64).contains(&(short_address))) {
+                return Err("End address out of bounds".into());
+            }
         }
         state.short_address = short_address;
         configure_variable_uint(
@@ -1025,7 +1052,7 @@ impl DaliSimDevice for DaliSimGear {
         }
         Ok(())
     }
-
+     */
     fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()> {
         self.state.write().unwrap().init_end_time = bus_device.current_time() + INIT_TIMEOUT;
         self.thread = Some(tokio::spawn(device_thread(bus_device, self.state.clone())));
@@ -1043,7 +1070,14 @@ impl DaliSimDevice for DaliSimGear {
                 Ok(serde_json::to_string(&state.actual_level_at(Instant::now())).unwrap())
             }
             "targetLevel" => Ok(serde_json::to_string(&((state.target_level + 64) / 128)).unwrap()),
-            "shortAddress" => Ok(serde_json::to_string(&(state.short_address + 1)).unwrap()),
+            "shortAddress" => Ok(serde_json::to_string(
+                &(if state.short_address != MASK {
+                    state.short_address + 1
+                } else {
+                    MASK
+                }),
+            )
+            .unwrap()),
             "fadeTime" => Ok(serde_json::to_string(&(state.fade >> 4)).unwrap()),
             "fadeRate" => Ok(serde_json::to_string(&(state.fade & 0x0f)).unwrap()),
             "extendedFadeTimeBase" => {

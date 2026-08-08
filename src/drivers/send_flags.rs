@@ -3,6 +3,7 @@ const PRIORITY_SHIFT: u32 = u16::trailing_zeros(PRIORITY_MASK);
 
 const SEND_TWICE_BIT: u16 = 0x08;
 const EXPECT_ANSWER_BIT: u16 = 0x10; // Expect an answer
+const INVALID_BIT: u16 = 0x20;
 pub const PRIORITY_1: Flags = Priority(1);
 pub const PRIORITY_2: Flags = Priority(2);
 pub const PRIORITY_3: Flags = Priority(3);
@@ -19,6 +20,7 @@ pub enum Flags {
     Priority(u16),
     SendTwice(bool),
     ExpectAnswer(bool),
+    Invalid(bool), // Send an invalid frame to simulate a collision on the bus
     Combined(u16),
 }
 
@@ -42,6 +44,13 @@ impl Flags {
                     0
                 }
             }
+            Invalid(i) => {
+                if i {
+                    INVALID_BIT
+                } else {
+                    0
+                }
+            }
             Combined(b) => b,
         }
     }
@@ -57,10 +66,13 @@ impl Flags {
         let p = (self.bits() & PRIORITY_MASK) << PRIORITY_SHIFT;
         if (0..=5).contains(&p) { p } else { 5 }
     }
+    pub fn invalid(&self) -> bool {
+        (self.bits() & INVALID_BIT) != 0
+    }
 }
 
-impl std::ops::BitOr<Flags> for Flags {
-    type Output = Self;
+impl std::ops::BitOr<Flags> for &Flags {
+    type Output = Flags;
     fn bitor(self, other: Flags) -> Self::Output {
         let b = self.bits();
         let masked = match other {
@@ -68,21 +80,21 @@ impl std::ops::BitOr<Flags> for Flags {
             Priority(_) => b & !PRIORITY_MASK,
             SendTwice(_) => b & !SEND_TWICE_BIT,
             ExpectAnswer(_) => b & !EXPECT_ANSWER_BIT,
+            Invalid(_) => b & !INVALID_BIT,
             Combined(_) => b,
         };
         Combined(masked | other.bits())
     }
 }
+impl std::ops::BitOr<Flags> for Flags {
+    type Output = Self;
+    fn bitor(self, other: Flags) -> Self::Output {
+        &self | other
+    }
+}
+
 impl std::ops::BitOrAssign<Flags> for Flags {
     fn bitor_assign(&mut self, other: Flags) {
-        let b = self.bits();
-        let masked = match other {
-            Empty => b,
-            Priority(_) => b & !PRIORITY_MASK,
-            SendTwice(_) => b & !SEND_TWICE_BIT,
-            ExpectAnswer(_) => b & !EXPECT_ANSWER_BIT,
-            Combined(_) => b,
-        };
-        *self = Combined(masked | other.bits());
+        *self = &*self | other;
     }
 }

@@ -81,6 +81,7 @@ struct GearState {
     target_gear: usize,  // Index of gear to move selection to
     gears: Vec<GearData>,
     configurations: Vec<ConfigurationInfo>,
+    search_style: SearchStyle,
 }
 
 pub struct IdentificationCtxt {
@@ -126,6 +127,7 @@ impl Default for IdentificationCtxt {
             target_gear: 0,
             gears: Vec::new(),
             configurations: Vec::new(),
+            search_style: SearchStyle::LowerHigh,
         };
         IdentificationCtxt {
             state: RwLock::new(state),
@@ -301,6 +303,12 @@ async fn handle_commands(
             });
             driver.set_low(id_low).await?;
             driver.set_high(id_high).await?;
+        }
+        DaliCommands::ChangeSearchStyle { search_style } => {
+            ctxt.modify_state(|s| {
+                s.current_gear = 0;
+                s.search_style = search_style;
+            });
         }
         DaliCommands::CommitChanges => {
             let gear_conf = ctxt.get_state(|state| {
@@ -512,6 +520,17 @@ fn decode_get_request(
                 DaliCommands::NewConfiguration { conf_id, index }
             }
             DaliCommands::COMMIT_CHANGES => DaliCommands::CommitChanges,
+            DaliCommands::CHANGE_SEARCH_STYLE => {
+                let search_style = match args.get("style") {
+                    Some(&"single") => SearchStyle::Single,
+                    Some(&"lower") => SearchStyle::LowerHigh,
+                    Some(_) => {
+                        return bad_request("'style' argument must be one of 'single' or 'lower'");
+                    }
+                    _ => return bad_request("Missing 'style' argument"),
+                };
+                DaliCommands::ChangeSearchStyle { search_style }
+            }
             //DaliCommands::SORT => DaliCommands::Sort,
             _ => return bad_request("Unknown command number"),
         };
@@ -620,6 +639,9 @@ enum DaliCommands {
         index: u16,
         conf_id: ConfigurationId,
     },
+    ChangeSearchStyle {
+        search_style: SearchStyle,
+    },
     CommitChanges,
     //Sort,
 }
@@ -630,7 +652,8 @@ impl DaliCommands {
     pub const FIND_ALL: u32 = 2;
     pub const NEW_CONFIGURATION: u32 = 3;
     pub const COMMIT_CHANGES: u32 = 4;
-    //pub const SORT: u32 = 5;
+    pub const CHANGE_SEARCH_STYLE: u32 = 5;
+    //pub const SORT: u32 = 6;
 }
 
 impl serde::Serialize for DaliCommands {
@@ -645,6 +668,7 @@ impl serde::Serialize for DaliCommands {
             FindAll => Self::FIND_ALL,
             NewConfiguration { .. } => Self::NEW_CONFIGURATION,
             CommitChanges => Self::COMMIT_CHANGES,
+            ChangeSearchStyle { .. } => Self::CHANGE_SEARCH_STYLE,
             //Sort => Self::SORT,
         })
     }
@@ -696,6 +720,12 @@ struct DaliCommandRequest {
     pub reply: oneshot::Sender<DaliCommandStatus>,
 }
 
+#[derive(Clone, Debug)]
+enum SearchStyle {
+    LowerHigh, // All lights before the current light is at high level, all above at low
+    Single,    // Only the current light is high, all others low
+}
+
 struct CmdThread {
     driver: SyncConfigurationDriver,
     ctxt: Arc<IdentificationCtxt>,
@@ -715,7 +745,6 @@ impl CmdThread {
     ) -> CmdThread {
         let step_gear = false;
         let current_high = false;
-
         CmdThread {
             driver,
             ctxt,
@@ -757,23 +786,39 @@ impl CmdThread {
         start_blink.set(Fuse::terminated());
         tick_blink.set(Fuse::terminated());
 
-        let (gear_low, gear_high) = self.ctxt.modify_state(|state| {
-            if state.current_gear < state.target_gear {
-                let gear_low = state.gears[state.current_gear as usize].id.clone();
+        let (gear_low, gear_high, step_up, search_style) = self.ctxt.modify_state(|state| {
+            let step_up = state.current_gear < state.target_gear;
+            let gear_high;
+            let gear_low;
+            if step_up {
+                gear_low = state.gears[state.current_gear as usize].id.clone();
                 state.current_gear += 1;
-                let gear_high = state.gears[state.current_gear as usize].id.clone();
-                (Some(gear_low), gear_high)
+                gear_high = state.gears[state.current_gear as usize].id.clone();
             } else {
-                let gear_high = state.gears[state.current_gear as usize].id.clone();
+                gear_high = state.gears[state.current_gear as usize].id.clone();
                 state.current_gear -= 1;
-                (None, gear_high)
+                gear_low = state.gears[state.current_gear as usize].id.clone();
             }
+            (gear_low, gear_high, step_up, state.search_style.clone())
         });
-        if let Some(gear_low) = gear_low {
+        if step_up {
             // Stepping up
-            if !self.current_high {
-                if let Err(e) = self.driver.set_high(gear_low).await {
-                    error!("Failed to set high level: {}", e);
+            match search_style {
+                SearchStyle::Single => {
+                    // Set the gear bellow the current one to low
+                    if self.current_high {
+                        if let Err(e) = self.driver.set_low(gear_low).await {
+                            error!("Failed to set low level: {}", e);
+                        }
+                    }
+                }
+                SearchStyle::LowerHigh => {
+                    // Set the gear bellow the current one to high
+                    if !self.current_high {
+                        if let Err(e) = self.driver.set_high(gear_low).await {
+                            error!("Failed to set high level: {}", e);
+                        }
+                    }
                 }
             }
             if let Err(e) = self.driver.set_high(gear_high).await {
@@ -785,6 +830,16 @@ impl CmdThread {
             if self.current_high {
                 if let Err(e) = self.driver.set_low(gear_high).await {
                     error!("Failed to set low level: {}", e);
+                }
+            }
+            match search_style {
+                SearchStyle::Single => {
+                    if let Err(e) = self.driver.set_high(gear_low).await {
+                        error!("Failed to set low level: {}", e);
+                    }
+                }
+                SearchStyle::LowerHigh => {
+                    // All below are already high
                 }
             }
             self.current_high = true;

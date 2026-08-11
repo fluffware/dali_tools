@@ -16,11 +16,15 @@
     <div id="container">
       <div id="left_box">
 	<img id="wait" src="wait_50x50.webp" autoplay="true"/>
+	<input id="search_style" type="checkbox"/>
+	<label for="search_style">Single</label>
 	<p>Index: <span id="index"/>/<span id="max_index"/></p>
 	<p id="conf_map">Address: <span id="gear_label"/> → <span id="new_conf"/> <select id="conf_entry"/> <button id ="set_conf">Set</button></p>
 	<button id="find_all">Find all</button>
 	<button id="commit_changes">Commit</button>
-	<button id="sort">Sort</button>
+	<!--
+	    <button id="sort">Sort</button>
+	    -->
       </div>
       <div id="right_box"><canvas id="addr_swipe" /></div>
       <div id="low_box">

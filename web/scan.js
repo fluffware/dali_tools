@@ -25,7 +25,8 @@ const SCAN_INDEX = 1;
 const FIND_ALL = 2;
 const NEW_CONFIGURATION = 3;
 const COMMIT_CHANGES = 4;
-const SORT = 5;
+const CHANGE_SEARCH_STYLE = 5
+const SORT = 6;
 
 let executing = {}
 function send_cmd(cmd, args = {}) {
@@ -517,12 +518,18 @@ function startup()
     commit_changes.addEventListener("click", function() {
 	send_cmd(COMMIT_CHANGES)
     });
-    
+
+    /*
     let sort = document.getElementById("sort");
     sort.addEventListener("click", function() {
 	send_cmd(SORT)
+	});*/
+    let single_style = document.getElementById("search_style")
+    single_style.addEventListener("change", function(ev) {
+	console.log(ev.value);
+	send_cmd(CHANGE_SEARCH_STYLE, {style: single_style.checked?"single":"lower"})
     });
-
+    
     index_listener = new IndexSwipeListener(swipe)
     addr_listener = new AddressSwipeListener(addr_swipe)
     body.addEventListener("keydown", function(e) {

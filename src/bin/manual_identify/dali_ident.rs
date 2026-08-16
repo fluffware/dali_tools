@@ -26,6 +26,7 @@ pub enum Error {
     ConfigurationError(String),
     InvalidGearId,
     InvalidConfigurartionId,
+    MissingAddress(/*gear_name: */ String),
 }
 
 impl std::error::Error for Error {}
@@ -36,6 +37,7 @@ impl std::fmt::Display for Error {
             Self::ConfigurationError(e) => e.fmt(f),
             Self::InvalidGearId => write!(f, "Invalid gear ID"),
             Self::InvalidConfigurartionId => write!(f, "Invalid configuration ID"),
+            Self::MissingAddress(n) => write!(f, "Gear {n} has no short address"),
         }
     }
 }
@@ -100,6 +102,11 @@ impl DaliConfigurationDriver {
         let mut conf_file = ConfigFile::default();
         parse_config::parse_config(reader, &mut conf_file)
             .map_err(|e| Error::ConfigurationError(e.to_string()))?;
+        for g in &conf_file.dali {
+            if g.address.is_none() {
+                return Err(Error::MissingAddress(g.label.clone()));
+            }
+        }
         self.conf_file = Some(conf_file);
         Ok(())
     }
@@ -214,7 +221,13 @@ impl ConfigurationDriver for DaliConfigurationDriver {
             for (index, c) in conf_file.dali.iter().enumerate() {
                 confs.push(ConfigurationInfo {
                     id: ConfigurationId::try_from(index as u16 + 1).unwrap(),
-                    label: format!("{} ({})", c.label, c.address.unwrap().to_string()),
+                    label: format!(
+                        "{} ({})",
+                        c.label,
+                        c.address
+                            .expect("All gears must have an address")
+                            .to_string()
+                    ),
                 });
             }
         } else {

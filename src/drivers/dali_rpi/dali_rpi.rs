@@ -167,18 +167,19 @@ async fn driver_thread(
                             if let Some((seqno, _)) = current_req {
                                 let (_,req) = current_req.take().unwrap();
                                 let result = match ser_rx_buf[1] {
-                                    2 if seqno == ser_rx_buf[0] => Some(DaliSendResult::Ok),
-                                    3 => Some(DaliSendResult::Answer(ser_rx_buf[4])),
-				    6 => Some(DaliSendResult::Framing),
-                                    10 => Some(DaliSendResult::Timeout),
-				    11 => Some(DaliSendResult::DriverError("Bus high, when driven low".into())),
-                                    _ => None,
+                                    2 if seqno == ser_rx_buf[0] => DaliSendResult::Ok,
+                                    3 => DaliSendResult::Answer(ser_rx_buf[4]),
+				    4 => DaliSendResult::Timeout,
+				    5 => DaliSendResult::Timeout,
+				    6 => DaliSendResult::Framing,
+                                    10 => DaliSendResult::Timeout,
+				    11 => DaliSendResult::DriverError("Bus high, when driven low".into()),
+                                    r => DaliSendResult::DriverError(
+					format!("Received unexpected result type {r}").into())
                                 };
 				//log::debug!("Result: {:?}",result); 
-                                if let Some(result) = result {
-                                    req.reply.send(result).unwrap();
-                                    req_timeout = None;
-                                }
+                                req.reply.send(result).unwrap();
+                                req_timeout = None;
                             }
                             if ser_rx_buf[0] == 0 && let Some(event) = bytes_to_event(&ser_rx_buf) {
                                 let _ = monitor.try_send(event);
@@ -270,7 +271,10 @@ impl DaliDriver for DaliRpiDriver {
             Ok(()) => Box::pin(async {
                 match rx.await {
                     Ok(r) => r,
-                    Err(e) => DaliSendResult::DriverError(Box::new(e)),
+                    Err(e) => {
+                        log::debug!("send error: {}", e);
+                        DaliSendResult::DriverError(Box::new(e))
+                    }
                 }
             }),
             Err(_) => {

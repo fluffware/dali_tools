@@ -975,7 +975,7 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let (cmd_req_tx, cmd_req_rx) = mpsc::channel(10);
+    let (cmd_req_tx, cmd_req_rx) = mpsc::channel(100);
     let cmd_thread = CmdThread::new(driver.clone(), id_ctxt.clone(), cmd_req_rx, cmd_log.clone());
     let cmd_join = tokio::spawn(cmd_thread.run());
     let mut conf = ServerConfig::new();

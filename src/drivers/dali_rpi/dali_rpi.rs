@@ -235,7 +235,7 @@ pub struct DaliRpiDriver {
 
 impl DaliRpiDriver {
     fn new(port: &str, baud_rate: u32, parity: Parity) -> Result<DaliRpiDriver, DriverError> {
-        let (tx, rx) = mpsc::channel::<DALIreq>(10);
+        let (tx, rx) = mpsc::channel::<DALIreq>(100);
         let (tx_monitor, rx_monitor) = mpsc::channel::<DaliBusEvent>(10);
         let serial = match SerialStream::open(&tokio_serial::new(port, baud_rate).parity(parity)) {
             Ok(s) => s,

@@ -117,7 +117,7 @@ async fn handle(
 }
 pub async fn setup_server(
     conf: ServerConfig,
-    cancel: impl Future<Output = ()>
+    cancel: impl Future<Output = ()>,
 ) -> DynResult<(impl Future<Output = DynResult<()>>, IpAddr, u16)> {
     let port = conf.port.unwrap_or(0);
     let bind_addr = conf
@@ -134,7 +134,7 @@ pub async fn setup_server(
     let server = async move {
         loop {
             let conf_clone = conf.clone();
-	    #[rustfmt::skip]
+            #[rustfmt::skip]
             tokio::select! {
 		Ok((stream, _)) = listener.accept() => {
                     let io = TokioIo::new(stream);
@@ -143,7 +143,6 @@ pub async fn setup_server(
 			    handle(conf_clone.clone(), req)
 			}));
                     let run = graceful.watch(http_conn);
-		    
                     tokio::task::spawn(async move {
 			if let Err(err) = run.await {
 			    error!("Error serving connection: {:?}", err);

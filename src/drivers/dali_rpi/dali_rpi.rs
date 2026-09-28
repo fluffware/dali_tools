@@ -167,11 +167,14 @@ async fn driver_thread(
                             if let Some((seqno, _)) = current_req {
                                 let (_,req) = current_req.take().unwrap();
                                 let result = match ser_rx_buf[1] {
+				    1 => DaliSendResult::Pending,
                                     2 if seqno == ser_rx_buf[0] => DaliSendResult::Ok,
                                     3 => DaliSendResult::Answer(ser_rx_buf[4]),
 				    4 => DaliSendResult::Timeout,
 				    5 => DaliSendResult::Timeout,
 				    6 => DaliSendResult::Framing,
+				    7..=8 => DaliSendResult::Timeout,
+				    9 => DaliSendResult::Timeout,
                                     10 => DaliSendResult::Timeout,
 				    11 => DaliSendResult::DriverError("Bus high, when driven low".into()),
                                     r => DaliSendResult::DriverError(

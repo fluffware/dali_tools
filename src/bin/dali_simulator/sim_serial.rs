@@ -78,11 +78,11 @@ impl Driver {
                 reply
             } // An answer didn't arrive in time
             DaliSendResult::Framing => {
-                reply[1] = 1;
+                reply[1] = 6;
                 reply
             }
             DaliSendResult::DriverError(_) => {
-                reply[1] = 1;
+                reply[1] = 0x80;
                 reply
             }
             DaliSendResult::Pending => {

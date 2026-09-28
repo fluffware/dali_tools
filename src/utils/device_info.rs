@@ -102,8 +102,18 @@ impl fmt::Display for GearInfo {
         )?;
         if !self.device_types.is_empty() {
             f.write_str("Device type:")?;
-            for t in &self.device_types {
-                write!(f, " {} (0x{})", t, t.value())?;
+            let mut iter = self.device_types.iter();
+            if let Some(mut t) = iter.next() {
+                loop {
+                    write!(f, " {} ({})", t, t.value())?;
+                    match iter.next() {
+                        None => break,
+                        Some(v) => {
+                            t = v;
+                        }
+                    };
+                    f.write_str(",")?;
+                }
             }
             f.write_str("\n")?;
         }
@@ -236,7 +246,7 @@ pub async fn read_gear_info(
     match send16::query(d, cmd::QUERY_DEVICE_TYPE(addr), NO_FLAG).await {
         DaliSendResult::Answer(MASK) => loop {
             match send16::query(d, cmd::QUERY_NEXT_DEVICE_TYPE(addr), NO_FLAG).await {
-                DaliSendResult::Answer(MASK) => break,
+                DaliSendResult::Answer(254) => break,
                 DaliSendResult::Answer(t) => info.device_types.push(DeviceType::new(t)),
                 DaliSendResult::Timeout => break,
                 e => return Err(e),

@@ -10,6 +10,7 @@ mod clear_addr;
 mod discover;
 mod fade;
 mod group;
+mod memory;
 mod monitor;
 mod power;
 mod query;
@@ -59,6 +60,7 @@ async fn main() {
     add_tool(scene::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(group::init_subtool(), &mut tool_map, &mut cli_cmd);
     add_tool(fade::init_subtool(), &mut tool_map, &mut cli_cmd);
+    add_tool(memory::init_subtool(), &mut tool_map, &mut cli_cmd);
     let matches = cli_cmd.get_matches();
 
     let device_name = matches.get_one::<String>("DEVICE").unwrap();

@@ -35,6 +35,11 @@
 	    <img class="button" src="OK.svg" onclick="dali_current_set('lampFailure',false)"/>
 	</td></tr>
       </table>
+      <form id = "loadconf" method = "POST" enctype="multipart/form-data" action = "/upload/conf">
+	<input id = "conffile" name="conffile" type = "file" />
+	<input type = "submit" value = "Load" id = "submit" />
+      </form>
+
     </div>
     <div id="layout">
       <input type="file" id="layout_file"/>

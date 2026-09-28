@@ -124,6 +124,16 @@ async fn main() {
                     }
                 };
                 println!("{}", info);
+                if read_memory {
+                    let mut commands = Commands103::new(&mut *driver);
+                    match memory_banks::read_bank_0(&mut commands, addr, 0, 0, 0x18).await {
+                        Ok(data) => println!("{}", data),
+                        Err(e) => {
+                            eprintln!("Failed to read memory banks: {}", e);
+                            return;
+                        }
+                    }
+                }
             }
         } else {
             let mut commands = Commands102::new(&mut *driver);
@@ -141,7 +151,8 @@ async fn main() {
                 };
                 println!("{}", info);
                 if read_memory {
-                    match memory_banks::read_bank_0(&mut *driver, addr, 0, 0, 0x18).await {
+                    let mut commands = Commands102::new(&mut *driver);
+                    match memory_banks::read_bank_0(&mut commands, addr, 0, 0, 0x18).await {
                         Ok(data) => println!("{}", data),
                         Err(e) => {
                             eprintln!("Failed to read memory banks: {}", e);

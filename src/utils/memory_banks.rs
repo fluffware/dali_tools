@@ -1,8 +1,5 @@
 use crate::common::address::Short;
-use crate::drivers::command_utils::send16;
-use crate::drivers::driver::{DaliDriver, DaliSendResult};
-use crate::drivers::send_flags::{NO_FLAG, PRIORITY_1};
-use crate::gear::cmd_defs as cmd;
+use crate::common::commands::{Commands, ErrorInfo};
 use log::debug;
 use std::convert::TryInto;
 use std::error::Error;
@@ -79,13 +76,13 @@ fn version_str(ver: u8) -> String {
 impl fmt::Display for MemoryBank0Info {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "GTIN: {}", self.gtin)?;
+        writeln!(f, "Identification number: {}", self.id_number)?;
         writeln!(
             f,
             "Firmware version: {}.{}",
             self.firmware_version >> 8,
             self.firmware_version & 0xff
         )?;
-        writeln!(f, "Identification number: {}", self.id_number)?;
         writeln!(
             f,
             "Hardware version: {}.{}",
@@ -115,23 +112,27 @@ impl fmt::Display for MemoryBank0Info {
     }
 }
 
-pub async fn read_range(
-    d: &mut dyn DaliDriver,
+pub async fn read_range<C>(
+    commands: &mut C,
     addr: Short,
     bank: u8,
     start: u8,
     length: u8,
-) -> Result<Vec<u8>, Box<dyn Error>> {
-    send16::set_dtr1(d, bank, NO_FLAG).await.check_send()?;
-    send16::set_dtr0(d, start, NO_FLAG).await.check_send()?;
+) -> Result<Vec<u8>, Box<dyn Error>>
+where
+    C: Commands,
+    <C as Commands>::Error: Error,
+{
+    commands.dtr1(bank).await?;
+    commands.dtr0(start).await?;
     let mut data = Vec::new();
     for offset in 0..length {
-        match send16::query(d, cmd::READ_MEMORY_LOCATION(addr), PRIORITY_1).await {
-            DaliSendResult::Answer(d) => {
+        match commands.read_memory_location(addr).await {
+            Ok(d) => {
                 debug!("Reading {},{}: 0x{:02x}", bank, start + offset, d);
                 data.push(d)
             }
-            DaliSendResult::Timeout => {
+            Err(e) if e.is_timeout() => {
                 return Err(format!(
                     "Address {} of bank {} is not implemented",
                     start + offset,
@@ -139,13 +140,11 @@ pub async fn read_range(
                 )
                 .into());
             }
-            e => return Err(Box::new(e)),
+            Err(e) => return Err(Box::new(e)),
         }
     }
 
-    let dtr = send16::query(d, cmd::QUERY_CONTENT_DTR0(addr), NO_FLAG)
-        .await
-        .check_answer()?;
+    let dtr = commands.query_dtr0(addr).await?;
     if length as usize == data.len() {
         if dtr != length + start {
             debug!("A {} != {}", dtr, length + start);
@@ -158,16 +157,20 @@ pub async fn read_range(
     Ok(data)
 }
 
-pub async fn read_bank_0(
-    d: &mut dyn DaliDriver,
+pub async fn read_bank_0<C>(
+    commands: &mut C,
     addr: Short,
     _bank: u8,
     _start: u8,
     _length: u8,
-) -> Result<MemoryBank0Info, Box<dyn Error>> {
+) -> Result<MemoryBank0Info, Box<dyn Error>>
+where
+    C: Commands,
+    <C as Commands>::Error: Error,
+{
     let mut bank0 = [0u8; 0x1b];
     let mut info = MemoryBank0Info::new();
-    let bytes = read_range(d, addr, 0, 2, 0x19).await?;
+    let bytes = read_range(commands, addr, 0, 2, 0x19).await?;
     if bytes.len() != 0x19 {
         return Err(Box::new(MemoryError::InvalidMemoryArea));
     }
@@ -186,4 +189,28 @@ pub async fn read_bank_0(
     info.control_gear_index = bank0[0x1a];
 
     Ok(info)
+}
+
+pub async fn write<C>(
+    commands: &mut C,
+    addr: C::Address,
+    bank: u8,
+    start: u8,
+    data: &[u8],
+) -> Result<(), Box<dyn Error>>
+where
+    C: Commands,
+    <C as Commands>::Error: Error,
+{
+    commands.enable_write_memory(addr).await?;
+
+    commands.dtr1(bank).await?;
+    commands.dtr0(start).await?;
+    for d in data {
+        let r = commands.write_memory_location(*d).await?;
+        if r != *d {
+            return Err("Mismatching value when writing to memory bank {}, address {}".into());
+        }
+    }
+    Ok(())
 }

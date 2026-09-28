@@ -121,6 +121,19 @@ impl<'a> Commands for Commands102<'a> {
     async fn dtr2(&mut self, data: u8) -> Result<(), Self::Error> {
         self.cmd(DTR2(data)).await
     }
+    async fn query_dtr0(&mut self, addr: Short) -> Result<u8, Self::Error> {
+        self.query(QUERY_CONTENT_DTR0(addr)).await
+    }
+
+    async fn query_dtr1(&mut self, addr: Short) -> Result<u8, Self::Error> {
+        self.query(QUERY_CONTENT_DTR1(addr)).await
+    }
+    async fn query_dtr2(&mut self, addr: Short) -> Result<u8, Self::Error> {
+        self.query(QUERY_CONTENT_DTR2(addr)).await
+    }
+    async fn enable_write_memory(&mut self, addr: Self::Address) -> Result<(), Self::Error> {
+        self.cmd(ENABLE_WRITE_MEMORY(addr)).await
+    }
     async fn write_memory_location(&mut self, data: u8) -> Result<u8, Self::Error> {
         self.query(WRITE_MEMORY_LOCATION(data)).await
     }
@@ -138,7 +151,9 @@ impl<'a> Commands for Commands102<'a> {
     async fn read_memory_location(&mut self, device: Short) -> Result<u8, Self::Error> {
         self.query(READ_MEMORY_LOCATION(device)).await
     }
-
+    async fn reset_momory_bank(&mut self, device: Short) -> Result<(), Self::Error> {
+        self.cmd(RESET_MEMORY_BANK(device)).await
+    }
     async fn identify_device(&mut self, device: Address) -> Result<(), Self::Error> {
         self.cmd(IDENTIFY_DEVICE(device)).await
     }

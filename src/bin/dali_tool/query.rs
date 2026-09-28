@@ -5,6 +5,7 @@ use dali_tools::common::commands::Commands;
 use dali_tools::control::commands_103::Commands103;
 use dali_tools::drivers::driver::DaliSendResult;
 use dali_tools::gear::commands_102::Commands102;
+use dali_tools::gear::energy_reporting;
 use dali_tools::utils::device_info;
 use dali_tools::utils::memory_banks;
 use dali_tools::utils::parse_address;
@@ -19,6 +20,7 @@ fn execute<'a>(
     Box::pin(async {
         let addrs = matches.get_one::<Vec<Short>>("ADDR_RANGE").unwrap();
         let read_memory = *matches.get_one::<bool>("memory_banks").unwrap();
+        let read_energy = *matches.get_one::<bool>("energy").unwrap();
         let control_device = *matches.get_one::<bool>("control").unwrap();
         let try_all = *matches.get_one::<bool>("try-all").unwrap();
         for addr in addrs {
@@ -37,6 +39,15 @@ fn execute<'a>(
                         }
                     };
                     println!("{}", info);
+                    if read_memory {
+                        let mut commands = Commands103::new(&mut *ctxt.driver);
+                        match memory_banks::read_bank_0(&mut commands, *addr, 0, 0, 0x18).await {
+                            Ok(data) => println!("{}", data),
+                            Err(e) => {
+                                return Err(format!("Failed to read memory banks: {}", e).into());
+                            }
+                        }
+                    }
                 }
             } else {
                 let mut commands = Commands102::new(&mut *ctxt.driver);
@@ -63,13 +74,18 @@ fn execute<'a>(
                     };
                     println!("{}", info);
                     if read_memory {
-                        match memory_banks::read_bank_0(&mut *ctxt.driver, *addr, 0, 0, 0x18).await
-                        {
+                        let mut commands = Commands102::new(&mut *ctxt.driver);
+                        match memory_banks::read_bank_0(&mut commands, *addr, 0, 0, 0x18).await {
                             Ok(data) => println!("{}", data),
                             Err(e) => {
                                 return Err(format!("Failed to read memory banks: {}", e).into());
                             }
                         }
+                    }
+                    if read_energy {
+                        let mut commands = Commands102::new(&mut *ctxt.driver);
+                        let active = energy_reporting::read_bank(&mut commands, *addr, 202).await?;
+                        println!("{}", active);
                     }
                 }
             }
@@ -93,6 +109,11 @@ pub fn init_subtool() -> SubTool {
                 .long("memory-banks")
 		 .action(clap::ArgAction::SetTrue)
                 .help("Read information from memory banks"),
+        ).arg(
+            Arg::new("energy")
+                .long("energy")
+		 .action(clap::ArgAction::SetTrue)
+                .help("Read energy reporting information"),
         )
         .arg(
             Arg::new("control")

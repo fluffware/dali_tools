@@ -18,6 +18,7 @@ use log::debug;
 use rand::RngExt;
 use serde_derive::Serialize;
 use std::cmp::{max, min};
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
@@ -111,6 +112,14 @@ pub struct GearState {
 
     #[serde(skip)]
     current_time: Instant, // Time for evaluating, timers, fades, etc.
+
+    #[serde(skip)]
+    memory_banks: HashMap<u8, Vec<u8>>,
+
+    #[serde(skip)]
+    device_types: Vec<u8>,
+    #[serde(skip)]
+    device_type_index: usize,
 }
 
 const FADE_SLOPE_SHIFT: i32 = 29;
@@ -150,6 +159,9 @@ impl GearState {
             init_end_time: now + INIT_TIMEOUT,
 
             current_time: now,
+            memory_banks: HashMap::new(),
+            device_types: vec![device_type::types::LED],
+            device_type_index: 0,
         }
     }
 
@@ -397,10 +409,25 @@ fn query_cmd(dev: &mut GearState, _addr: u8, cmd: u8, _flags: Flags) -> Option<D
             return Some(DaliBusEventType::Frame8(2 << 2 + 0)); // 2.0
         }
         cmd_defs::QUERY_EXTENDED_VERSION_NUMBER_OPCODE_BYTE => return NO_REPLY,
-        cmd_defs::QUERY_DEVICE_TYPE_OPCODE_BYTE => {
-            return Some(DaliBusEventType::Frame8(device_type::types::LED));
+        cmd_defs::QUERY_DEVICE_TYPE_OPCODE_BYTE => match dev.device_types.len() {
+            0 => return Some(DaliBusEventType::Frame8(0xfe)),
+            1 => return Some(DaliBusEventType::Frame8(dev.device_types[0])),
+
+            _ => {
+                dev.device_type_index = 0;
+                return Some(DaliBusEventType::Frame8(0xff));
+            }
+        },
+        cmd_defs::QUERY_NEXT_DEVICE_TYPE_OPCODE_BYTE => {
+            return if dev.device_types.len() <= 1 {
+                NO_REPLY
+            } else if let Some(dt) = dev.device_types.get(dev.device_type_index) {
+                dev.device_type_index += 1;
+                Some(DaliBusEventType::Frame8(*dt))
+            } else {
+                Some(DaliBusEventType::Frame8(0xfe))
+            };
         }
-        cmd_defs::QUERY_NEXT_DEVICE_TYPE_OPCODE_BYTE => return NO_REPLY,
         cmd_defs::QUERY_PHYSICAL_MINIMUM_OPCODE_BYTE => {
             return Some(DaliBusEventType::Frame8(dev.physical_minimum_level));
         }
@@ -711,12 +738,25 @@ fn remove_from_group_cmd(
     }
     NO_REPLY
 }
-fn memory_cmd(
-    _dev: &mut GearState,
-    _addr: u8,
-    _cmd: u8,
-    _flags: Flags,
-) -> Option<DaliBusEventType> {
+fn memory_cmd(dev: &mut GearState, _addr: u8, cmd: u8, flags: Flags) -> Option<DaliBusEventType> {
+    match cmd {
+        cmd_defs::READ_MEMORY_LOCATION_OPCODE_BYTE => {
+            if let Some(bank) = dev.memory_banks.get(&dev.dtr1) {
+                if let Some(content) = bank.get(usize::from(dev.dtr0)) {
+                    if dev.dtr0 < 255 {
+                        dev.dtr0 += 1;
+                    }
+                    return Some(DaliBusEventType::Frame8(*content));
+                }
+            }
+        }
+        cmd_defs::ENABLE_WRITE_MEMORY_OPCODE_BYTE => {
+            if flags.send_twice() {
+                dev.write_enable_state = WriteEnableState::ENABLED;
+            }
+        }
+        _ => {}
+    }
     NO_REPLY
 }
 fn application_extended_cmd(
@@ -853,11 +893,54 @@ fn special_cmd(dev: &mut GearState, cmd: u8, data: u8, flags: Flags) -> Option<D
             dev.dtr2 = data;
             NO_REPLY
         }
-
+        cmd_defs::WRITE_MEMORY_LOCATION_ADDRESS_BYTE => {
+            if let WriteEnableState::ENABLED = dev.write_enable_state {
+                if let Some(bank) = dev.memory_banks.get_mut(&dev.dtr1) {
+                    if let Some(content) = bank.get_mut(usize::from(dev.dtr0)) {
+                        *content = data;
+                        if dev.dtr0 < 255 {
+                            dev.dtr0 += 1;
+                        }
+                        return Some(DaliBusEventType::Frame8(data));
+                    }
+                }
+            }
+            NO_REPLY
+        }
+        cmd_defs::WRITE_MEMORY_LOCATION_NO_REPLY_ADDRESS_BYTE => {
+            if let WriteEnableState::ENABLED = dev.write_enable_state {
+                if let Some(bank) = dev.memory_banks.get_mut(&dev.dtr1) {
+                    if let Some(content) = bank.get_mut(usize::from(dev.dtr0)) {
+                        *content = data;
+                        if dev.dtr0 < 255 {
+                            dev.dtr0 += 1;
+                        }
+                    }
+                }
+            }
+            NO_REPLY
+        }
         _ => NO_REPLY,
     }
 }
-fn device_init(name: String) -> Box<dyn DaliSimDevice> {
+
+fn pre_cmd16(state: &mut GearState, cmd: [u8; 2]) {
+    match cmd[0] {
+        cmd_defs::WRITE_MEMORY_LOCATION_ADDRESS_BYTE
+        | cmd_defs::WRITE_MEMORY_LOCATION_NO_REPLY_ADDRESS_BYTE
+        | cmd_defs::QUERY_CONTENT_DTR0_OPCODE_BYTE
+        | cmd_defs::QUERY_CONTENT_DTR1_OPCODE_BYTE
+        | cmd_defs::QUERY_CONTENT_DTR2_OPCODE_BYTE
+        | cmd_defs::DTR0_ADDRESS_BYTE
+        | cmd_defs::DTR1_ADDRESS_BYTE
+        | cmd_defs::DTR2_ADDRESS_BYTE => {}
+        _ => {
+            state.write_enable_state = WriteEnableState::DISABLED;
+        }
+    }
+}
+
+fn device_init(name: String) -> Box<dyn DaliSimDevice + Send + Sync> {
     Box::new(DaliSimGear::new(name))
 }
 
@@ -930,129 +1013,25 @@ impl ConfigureGear for DaliSimGear {
     fn conf_gear_groups(&mut self, groups: u16) {
         self.state.write().unwrap().gear_groups = groups
     }
-    fn conf_scenes(&mut self, map: &[(u8, u8)]) {
+
+    fn conf_scenes(&mut self, map: &[(u8, u8)]) // (scene number (0 based), scene level)
+    {
         let mut state = self.state.write().unwrap();
         for (index, level) in map {
             state.scenes[*index as usize] = *level;
         }
-    } // (scene number (0 based), scene level)
+    }
+    fn conf_memory_bank(&mut self, bank: u8, data: &[u8]) {
+        let mut state = self.state.write().unwrap();
+        state.memory_banks.insert(bank, Vec::from(data));
+    }
+
+    fn conf_device_types(&mut self, device_types: &[u8]) {
+        let mut state = self.state.write().unwrap();
+        state.device_types = Vec::from(device_types);
+    }
 }
 impl DaliSimDevice for DaliSimGear {
-    /*
-    fn configure(&mut self, conf: &yaml_serde::value::Mapping, index: usize) -> DynResult<()> {
-        let mut state = self.state.write().unwrap();
-        configure_variable_uint(
-            conf,
-            "randomAddress",
-            &mut state.random_address,
-            0..=0xffffff,
-            0u32,
-        )?;
-        let mut step = 1u8;
-        configure_variable_uint(conf, "shortAddressStep", &mut step, 1..=64, 0)?;
-        let mut short_address = MASK;
-        configure_variable_uint(conf, "shortAddress", &mut short_address, 1..=64, 1)?;
-        if short_address != MASK {
-            short_address += step * index as u8;
-            if !((0..64).contains(&(short_address))) {
-                return Err("End address out of bounds".into());
-            }
-        }
-        state.short_address = short_address;
-        configure_variable_uint(
-            conf,
-            "lastLightLevel",
-            &mut state.last_light_level,
-            0..=255,
-            0u8,
-        )?;
-        let mut target_level = 0;
-        configure_variable_uint(conf, "targetLevel", &mut target_level, 0..255, 0)?;
-        set_target_level(&mut *state, target_level);
-
-        configure_variable_uint(conf, "powerOnLevel", &mut state.power_on_level, 0..255, 0)?;
-        configure_variable_uint(
-            conf,
-            "systemFailureLevel",
-            &mut state.system_failure_level,
-            0..=255,
-            0,
-        )?;
-        configure_variable_uint(conf, "minLevel", &mut state.min_level, 0..=255, 0)?;
-        configure_variable_uint(conf, "maxLevel", &mut state.max_level, 0..=255, 0)?;
-        if let Some(value) = conf.get("fadeRate").and_then(|v| v.as_u64()) {
-            state.fade = (state.fade & 0xf0) | (value as u8 & 0x0f);
-        }
-        if let Some(value) = conf.get("fadeTime").and_then(|v| v.as_u64()) {
-            state.fade = (state.fade & 0x0f) | (value as u8 & 0x0f) << 4;
-        }
-        if let Some(value) = conf.get("extendedFadeTimeBase").and_then(|v| v.as_u64()) {
-            state.extended_fade_time = (state.extended_fade_time & 0xf0) | (value as u8 & 0x0f);
-        }
-        if let Some(value) = conf
-            .get("extendedFadeTimeMultiplier")
-            .and_then(|v| v.as_u64())
-        {
-            state.extended_fade_time =
-                (state.extended_fade_time & 0x0f) | (value as u8 & 0x07) << 4;
-        }
-        match conf.get("gearGroups") {
-            Some(yaml_serde::Value::Sequence(groups)) => {
-                for group in groups {
-                    let bit = group
-                        .as_u64()
-                        .ok_or_else(|| boxed_err("Invalid group number"))?;
-                    if !(1..=16).contains(&bit) {
-                        return Err("Invalid group number".into());
-                    }
-                    state.gear_groups |= 1 << (bit - 1);
-                }
-            }
-            Some(yaml_serde::Value::Number(groups)) if let Some(g) = groups.as_u64() => {
-                state.gear_groups =
-                    u16::try_from(g).map_err(|e| format!("Illegal group bitmask: {}", e))?;
-            }
-            Some(_) => return Err("'gearGroups' must be a sequence or a number".into()),
-            None => {}
-        }
-        match conf.get("scenes") {
-            Some(yaml_serde::Value::Sequence(scenes)) => {
-                if scenes.len() > 16 {
-                    return Err("too many scenes".into());
-                }
-                for (index, level_val) in scenes.iter().enumerate() {
-                    let level = level_val
-                        .as_u64()
-                        .ok_or_else(|| boxed_err("Invalid level"))?;
-                    if !(0..=255).contains(&level) {
-                        return Err("Level out of range".into());
-                    }
-                    state.scenes[index] = level.try_into().map_err(|e| boxed_err(e))?;
-                }
-            }
-            Some(yaml_serde::Value::Mapping(scenes)) => {
-                for (index_val, level_val) in scenes.iter() {
-                    let index = index_val
-                        .as_u64()
-                        .ok_or_else(|| boxed_err("Invalid scene index"))?;
-                    if !(0..16).contains(&index) {
-                        return Err("Scene index out of range".into());
-                    }
-                    let level = level_val
-                        .as_u64()
-                        .ok_or_else(|| boxed_err("Invalid level"))?;
-                    if !(0..=255).contains(&level) {
-                        return Err("Level out of range".into());
-                    }
-                    state.scenes[index as usize] = level.try_into().map_err(|e| boxed_err(e))?;
-                }
-            }
-            Some(_) => return Err("'scenes' must be a sequence or a mapping".into()),
-            None => {}
-        }
-        Ok(())
-    }
-     */
     fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()> {
         self.state.write().unwrap().init_end_time = bus_device.current_time() + INIT_TIMEOUT;
         self.thread = Some(tokio::spawn(device_thread(bus_device, self.state.clone())));
@@ -1253,6 +1232,7 @@ async fn device_thread(bus: DaliSimBusDevice, state: Arc<RwLock<GearState>>) {
                         let short_address = state.short_address;
                         state.current_time = bus.current_time();
                         check_timers(&mut state);
+                        pre_cmd16(&mut *state, cmd);
                         match cmd[0] >> 1 {
                             addr @ 0x00..=0x3f if addr == short_address => {
                                 device_cmd(&mut *state, cmd[0], cmd[1], flags)

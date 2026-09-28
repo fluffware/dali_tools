@@ -128,19 +128,31 @@ function layout_file_changed() {
     console.log("File: "+file.name+" is "+file.type);
     let frame = document.getElementById("layout_frame")
     frame.src = URL.createObjectURL(file)
-    setTimeout(function() {
+    let filled_intensity_prev = 0;
+    let filled_rgbw_prev = 0;
+    let poll_done;
+    poll_done = setInterval(function() {
 	let layoyt_doc = iframeRef(frame)
 	let svg = layoyt_doc.getElementsByTagName("svg")[0];
-	let filled = svg.querySelectorAll("[data-dali-fill-intensity]")
-	for (f of filled) {
+	let filled_intensity = svg.querySelectorAll("[data-dali-fill-intensity]")
+	let filled_rgbw = svg.querySelectorAll("[data-dali-fill-rgbw]")
+	if ((filled_intensity.length == 0 && filled_rgbw.length == 0)
+	    || filled_intensity.length != filled_intensity_prev 
+	    || filled_rgbw.length !=  filled_rgbw_prev) {
+	    filled_rgbw_prev = filled_rgbw.length
+	    filled_intensity_prev = filled_intensity.length
+	    return
+	}
+	clearInterval(poll_done)
+	console.log(`Found ${filled_intensity.length}`) 
+	for (f of filled_intensity) {
 	    let name = f.getAttribute("data-dali-fill-intensity");
 	    console.log(f.style.fill)
 	    push_map(gear_filled, name, {elem: f, color: f.style.fill,
 					 component:3, power: [0,0,0,0]})
 	    f.addEventListener("click", svg_elem_filled_clicked);
 	}
-	filled = svg.querySelectorAll("[data-dali-fill-rgbw]")
-	for (f of filled) {
+	for (f of filled_rgbw) {
 	    let names = f.getAttribute("data-dali-fill-rgbw");
 	    console.log(f.style.fill)
 	    let components = names.split(",")

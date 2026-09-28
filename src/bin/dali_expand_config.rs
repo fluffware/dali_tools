@@ -145,7 +145,11 @@ impl Default for GearFactory {
 }
 
 impl CreateGear for GearFactory {
-    fn new_gear(&mut self, name: &str, gear_type: &str) -> DynResult<&mut dyn ConfigureGear> {
+    fn new_gear(
+        &mut self,
+        name: &str,
+        gear_type: &str,
+    ) -> DynResult<&mut (dyn ConfigureGear + Sync + Send)> {
         eprintln!("new_gear: {}", name);
         let gear = Gear::new(gear_type);
         self.gears.insert(name.to_string(), gear);

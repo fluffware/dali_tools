@@ -11,6 +11,7 @@ pub mod types {
     pub const LED: u8 = 6;
     pub const SWITCHING: u8 = 7;
     pub const COLOUR: u8 = 8;
+    pub const ENERGY_REPORTING: u8 = 51;
     pub const UNIMPLEMENTED: u8 = 254;
 }
 
@@ -36,6 +37,7 @@ impl fmt::Display for DeviceType {
             types::LED => "LED",
             types::SWITCHING => "Switching",
             types::COLOUR => "Colour",
+            types::ENERGY_REPORTING => "Energy Reporting",
             types::UNIMPLEMENTED => "Not implemented",
             _ => "",
         };

@@ -27,6 +27,8 @@ pub trait ConfigureGear {
     fn conf_extended_fade_time_multiplier(&mut self, _multiplier: u8) {}
     fn conf_gear_groups(&mut self, _groups: u16) {}
     fn conf_scenes(&mut self, _map: &[(u8, u8)]) {} // (scene number (0 based), scene level)
+    fn conf_memory_bank(&mut self, _bank: u8, _data: &[u8]) {}
+    fn conf_device_types(&mut self, _types: &[u8]) {}
 }
 
 fn configure_variable_uint<R, S>(
@@ -165,17 +167,34 @@ where
         0,
     )?;
 
+    match conf.get("deviceTypes") {
+        Some(yaml_serde::Value::Sequence(device_types_value)) => {
+            let mut device_types = Vec::new();
+            for dt_value in device_types_value {
+                if let Some(dt) = dt_value.as_i64()
+                    && (1..=255).contains(&dt)
+                {
+                    device_types.push(dt as u8);
+                } else {
+                    return Err("Invalid type number".into());
+                }
+            }
+            device.conf_device_types(&device_types);
+        }
+        Some(_) => return Err("'gearGroups' must be a sequence".into()),
+        None => {}
+    }
     match conf.get("gearGroups") {
         Some(yaml_serde::Value::Sequence(groups)) => {
             let mut gear_groups = 0;
             for group in groups {
-                let bit = group
-                    .as_u64()
-                    .ok_or_else(|| boxed_err("Invalid group number"))?;
-                if !(1..=16).contains(&bit) {
+                if let Some(bit) = group.as_u64()
+                    && (1..=16).contains(&bit)
+                {
+                    gear_groups |= 1 << (bit - 1);
+                } else {
                     return Err("Invalid group number".into());
                 }
-                gear_groups |= 1 << (bit - 1);
             }
             device.conf_gear_groups(gear_groups);
         }
@@ -226,6 +245,36 @@ where
         }
         device.conf_scenes(&map);
     }
+    if let Some(memory_banks) = conf.get("memoryBanks") {
+        let Some(banks) = memory_banks.as_mapping() else {
+            return Err("'memoryBanks' must be a mapping".into());
+        };
+        for (bank_value, data_value) in banks {
+            let Some(bank) = bank_value.as_i64() else {
+                return Err("'memoryBanks' keys must be numbers".into());
+            };
+            if bank < 0 || bank > 255 {
+                return Err("Memory bank number out of range".into());
+            };
+            let bank = bank as u8;
+            let Some(data) = data_value.as_sequence() else {
+                return Err("Value for each bank must me a sequence of bytes".into());
+            };
+            let mut bytes = Vec::new();
+            for byte_value in data {
+                let byte = if let Some(byte) = byte_value.as_i64()
+                    && byte >= 0
+                    && byte <= 255
+                {
+                    byte as u8
+                } else {
+                    return Err("Illegal byte value for memory bank".into());
+                };
+                bytes.push(byte);
+            }
+            device.conf_memory_bank(bank, &bytes);
+        }
+    }
     Ok(())
 }
 
@@ -255,7 +304,11 @@ fn label_offset(label: &str, offset: usize) -> String {
     }
 }
 pub trait CreateGear {
-    fn new_gear(&mut self, name: &str, gear_type: &str) -> DynResult<&mut dyn ConfigureGear>;
+    fn new_gear(
+        &mut self,
+        name: &str,
+        gear_type: &str,
+    ) -> DynResult<&mut (dyn ConfigureGear + Send + Sync)>;
 }
 
 pub fn parse_config<R, C>(conf_file: R, create: &mut C) -> DynResult<()>

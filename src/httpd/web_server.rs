@@ -13,10 +13,18 @@ use hyper_util::rt::TokioIo;
 use log::{debug, error, info};
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::pin::Pin;
+use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex as MutexSend;
 
 pub type BuildPage = Box<dyn FnMut(Request<Incoming>) -> DynResult<Response<Full<Bytes>>> + Send>;
+pub type PostHandler = Box<
+    dyn FnMut(
+            Request<Incoming>,
+        ) -> Pin<Box<dyn Future<Output = DynResult<Response<Full<Bytes>>>> + Send>>
+        + Send,
+>;
 
 /// Takes a path and returns (mime_type, resource_data)
 pub type GetResource = Box<dyn FnMut(&str) -> DynResult<(&str, Bytes)> + Send>;
@@ -25,6 +33,7 @@ pub struct ServerConfig {
     bind_addr: Option<IpAddr>,
     port: Option<u16>,
     build_page: Option<BuildPage>,
+    handle_post: Option<PostHandler>,
     web_resource: GetResource,
 }
 
@@ -50,6 +59,11 @@ impl ServerConfig {
         self
     }
 
+    pub fn handle_post(mut self, f: PostHandler) -> Self {
+        self.handle_post = Some(f);
+        self
+    }
+
     pub fn web_resource(mut self, resource: GetResource) -> Self {
         self.web_resource = resource;
         self
@@ -62,20 +76,21 @@ impl Default for ServerConfig {
             bind_addr: None,
             port: None,
             build_page: None,
+            handle_post: None,
             web_resource: Box::new(no_resource),
         }
     }
 }
 
 async fn handle(
-    conf: Arc<Mutex<ServerConfig>>,
+    conf: Arc<MutexSend<ServerConfig>>,
     req: Request<Incoming>,
 ) -> DynResult<Response<Full<Bytes>>> {
     let path = req.uri().path();
     match req.method() {
         &Method::GET => {
             if path.starts_with("/dyn/") {
-                let mut conf = conf.lock().unwrap();
+                let mut conf = conf.lock().await;
                 if let Some(build_page) = &mut conf.build_page {
                     build_page(req)
                 } else {
@@ -87,7 +102,7 @@ async fn handle(
                 }
             } else {
                 let (mime_type, data) = {
-                    let mut conf = conf.lock().unwrap();
+                    let mut conf = conf.lock().await;
                     match (conf.web_resource)(req.uri().path()) {
                         Ok(res) => res,
                         Err(e) => {
@@ -108,6 +123,18 @@ async fn handle(
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
             }
         }
+        &Method::POST => {
+            let mut conf = conf.lock().await;
+            if let Some(handle_post) = &mut conf.handle_post {
+                handle_post(req).await
+            } else {
+                Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .body(Full::new(Bytes::from("No POST handler".to_string())))
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            }
+        }
         m => Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .header(header::CONTENT_TYPE, "text/plain")
@@ -124,7 +151,7 @@ pub async fn setup_server(
         .bind_addr
         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
     let socket_addr = SocketAddr::new(bind_addr, port);
-    let conf = Arc::new(Mutex::new(conf));
+    let conf = Arc::new(MutexSend::new(conf));
     let listener = TcpListener::bind(&socket_addr).await?;
     let port = listener.local_addr().unwrap().port();
     let addr = listener.local_addr().unwrap().ip();

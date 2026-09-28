@@ -5,6 +5,7 @@ use crate::drivers::driver::{
 use crate::drivers::send_flags::Flags;
 use crate::futures::FutureExt;
 use crate::simulator;
+use crate::simulator::setup::Simulator;
 use crate::utils::dyn_future::DynFuture;
 use log::debug;
 use simulator::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent};
@@ -16,6 +17,8 @@ use std::fmt;
 use std::fs::File;
 use std::future::{self, Future};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -67,14 +70,14 @@ async fn debug_task(device: DaliSimBusDevice) {
 
 pub struct DaliSimDriver {
     #[allow(unused)]
-    sched: Box<dyn SimulatorScheduler + Send>,
+    sched: Arc<RwLock<dyn SimulatorScheduler + Send + Sync>>,
     bus_device: DaliSimBusDevice,
 }
 
 impl DaliSimDriver {
     pub fn new(
         bus_device: DaliSimBusDevice,
-        sched: Box<dyn SimulatorScheduler + Send>,
+        sched: Arc<RwLock<dyn SimulatorScheduler + Send + Sync>>,
     ) -> DaliSimDriver {
         DaliSimDriver { sched, bus_device }
     }
@@ -213,11 +216,12 @@ fn driver_open(params: HashMap<String, String>) -> Result<Box<dyn DaliDriver>, O
             .into(),
         )
     })?;
-    let (bus, mut sched, _) = simulator::setup::setup_simulator(conf_file)
+    let sim = Simulator::new();
+    sim.configure(conf_file)
         .map_err(|e| OpenError::DriverError(e.into()))?;
 
-    let bus_device = DaliSimBusDevice::new(bus, sched.new_task());
-    let driver = DaliSimDriver::new(bus_device, sched);
+    let bus_device = DaliSimBusDevice::new(sim.bus(), sim.scheduler().write().unwrap().new_task());
+    let driver = DaliSimDriver::new(bus_device, sim.scheduler());
     Ok(Box::new(driver))
 }
 

@@ -5,23 +5,28 @@ use dali::drivers::driver::{DaliBusEventType, DaliDriver, DaliFrame, OpenError};
 use dali::drivers::send_flags;
 use dali::httpd::{self, ServerConfig};
 use dali::simulator;
-use dali::simulator::device::{DaliSimDevice, ParameterError};
+use dali::simulator::device::ParameterError;
 use dali::simulator::timing;
 use dali_tools as dali;
 use dali_tools::simulator::sim_bus::{DaliSimBusDevice, DaliSimBusDeviceEvent};
 use futures::FutureExt;
 use futures::future::{Fuse, FusedFuture};
+use futures_util::StreamExt;
+use http_body_util::BodyStream;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use hyper::{header, http};
 use log::debug;
 use log::error;
+use multer::Multipart;
 use std::collections::HashMap;
+
 use std::collections::HashSet;
 use std::fs::File;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
@@ -38,7 +43,7 @@ fn bad_request(msg: &str) -> DynResult<Response<Full<Bytes>>> {
 
 fn decode_get_request(
     req: Request<Incoming>,
-    sim_devices: &HashMap<String, Box<dyn DaliSimDevice>>,
+    sim: Arc<simulator::setup::Simulator>,
 ) -> DynResult<Response<Full<Bytes>>> {
     if let Some(_) = req.uri().path().strip_prefix("/dyn/dali/device") {
         let mut addrs = HashSet::new();
@@ -87,6 +92,8 @@ fn decode_get_request(
         }
         let mut reply = String::from("{");
         let mut first_addr = true;
+        let sim_devices_arc = sim.devices();
+        let sim_devices = sim_devices_arc.read().unwrap();
         // Go through all devices and set and get parameters
         for dev_name in names {
             if let Some(dev) = sim_devices.get(dev_name) {
@@ -134,6 +141,55 @@ fn decode_get_request(
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
+
+async fn handle_post_request(
+    req: Request<Incoming>,
+    sim: Arc<simulator::setup::Simulator>,
+) -> DynResult<Response<Full<Bytes>>> {
+    if req.uri().path() == "/upload/conf" {
+        debug!("POST: {:?}", req.body());
+        let boundary = req
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|ct| ct.to_str().ok())
+            .and_then(|ct| multer::parse_boundary(ct).ok());
+
+        let Some(boundary) = boundary else {
+            return bad_request("Invalid boundary");
+        };
+        // Convert the body into a stream of data frames.
+        let body_stream = BodyStream::new(req.into_body()).filter_map(|result| async move {
+            result.map(|frame| frame.into_data().ok()).transpose()
+        });
+
+        // Create a Multipart instance from the request body.
+        let mut multipart = Multipart::new(body_stream, boundary);
+        // Iterate over the fields, `next_field` method will return the next field if
+        // available.
+        while let Some(field) = multipart.next_field().await? {
+            if field.name() == Some("conffile") {
+                match field.bytes().await {
+                    Ok(bytes) => {
+                        debug!("POST bytes: {bytes:?}");
+                        let mut r: &[u8] = &bytes;
+                        sim.configure(&mut r)?;
+                    }
+                    Err(e) => return bad_request(&format!("Failed to read file content: {e}")),
+                }
+            } else {
+                return bad_request("conffile field missing");
+            }
+        }
+        Response::builder()
+            .status(http::StatusCode::NO_CONTENT)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Full::new(Bytes::from("No such command".to_string())))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    } else {
+        bad_request("Invalid POST request")
+    }
+}
+
 #[cfg(feature = "sim_serial")]
 mod sim_serial;
 #[cfg(not(feature = "sim_serial"))]
@@ -227,7 +283,11 @@ async fn main() {
     }
     let cli_cmd = Command::new("dali_simulator")
         .about("Simulate DALI-devices on a bus ")
-        .arg(Arg::new("CONFIG").required(true).help("Configuration file"))
+        .arg(
+            Arg::new("CONFIG")
+                .required(false)
+                .help("Configuration file"),
+        )
         .arg(
             Arg::new("SERIAL_DEVICE")
                 .long("serial-device")
@@ -255,28 +315,31 @@ async fn main() {
                 .help("HTTP port"),
         );
     let matches = cli_cmd.get_matches();
-    let conf_filename = matches.get_one::<String>("CONFIG").unwrap();
-    let conf_file = match File::open(conf_filename) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!(
-                "Failed to open configuration file '{}': {}",
-                conf_filename, e
-            );
-            return;
-        }
-    };
-    let (bus, mut sched, sim_devices) = match simulator::setup::setup_simulator(conf_file) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to start simulator: {}", e);
-            return;
-        }
-    };
+    let sim = simulator::setup::Simulator::new();
+
+    if let Some(conf_filename) = matches.get_one::<String>("CONFIG") {
+        let conf_file = match File::open(conf_filename) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!(
+                    "Failed to open configuration file '{}': {}",
+                    conf_filename, e
+                );
+                return;
+            }
+        };
+        match sim.configure(conf_file) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Failed to start simulator: {}", e);
+                return;
+            }
+        };
+    }
     let cancel = CancellationToken::new();
     let serial = if let Some(serial_path) = matches.get_one::<String>("SERIAL_DEVICE") {
         sim_serial::start_serial(
-            DaliSimBusDevice::new(bus.clone(), sched.new_task()),
+            DaliSimBusDevice::new(sim.bus(), sim.scheduler().write().unwrap().new_task()),
             &serial_path,
             cancel.clone(),
         )
@@ -301,19 +364,34 @@ async fn main() {
             }
         };
 
-        dali_listener(driver, DaliSimBusDevice::new(bus.clone(), sched.new_task())).fuse()
+        dali_listener(
+            driver,
+            DaliSimBusDevice::new(sim.bus(), sim.scheduler().write().unwrap().new_task()),
+        )
+        .fuse()
     } else {
         Fuse::terminated()
     };
     tokio::pin!(dali_hw);
 
+    let sim = Arc::new(sim);
     let web_server = {
         let port = matches.get_one::<u16>("HTTP_PORT").unwrap();
         let address = matches.get_one::<IpAddr>("HTTP_ADDRESS").unwrap();
         let mut web_conf = ServerConfig::new();
         web_conf = web_conf.port(*port);
         web_conf = web_conf.bind_addr(*address);
-        web_conf = web_conf.build_page(Box::new(move |req| decode_get_request(req, &sim_devices)));
+        {
+            let sim = sim.clone();
+            web_conf =
+                web_conf.build_page(Box::new(move |req| decode_get_request(req, sim.clone())));
+        }
+        {
+            let sim = sim.clone();
+            web_conf = web_conf.handle_post(Box::new(move |req| {
+                Box::pin(handle_post_request(req, sim.clone()))
+            }));
+        }
         match httpd::start(web_conf, cancel.cancelled()).await {
             Ok((server, _bound_ip, _bound_port)) => server.fuse(),
             Err(e) => {

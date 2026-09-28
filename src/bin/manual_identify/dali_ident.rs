@@ -67,7 +67,11 @@ impl Default for ConfigFile {
     }
 }
 impl CreateGear for ConfigFile {
-    fn new_gear(&mut self, name: &str, _gear_type: &str) -> DynResult<&mut dyn ConfigureGear> {
+    fn new_gear(
+        &mut self,
+        name: &str,
+        _gear_type: &str,
+    ) -> DynResult<&mut (dyn ConfigureGear + Send + Sync)> {
         let gear_conf = DaliGearConfiguration {
             label: name.to_string(),
             address: None,

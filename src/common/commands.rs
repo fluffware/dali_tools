@@ -36,7 +36,7 @@ pub trait Commands {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
     fn verify_short_address(
         &mut self,
-        add: Short,
+        addr: Short,
     ) -> impl Future<Output = Result<YesNo, Self::Error>> + Send;
 
     /// Request short address for devces whose long address matches the search address.
@@ -48,6 +48,15 @@ pub trait Commands {
     fn dtr0(&mut self, data: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
     fn dtr1(&mut self, data: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
     fn dtr2(&mut self, data: u8) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    fn query_dtr0(&mut self, addr: Short) -> impl Future<Output = Result<u8, Self::Error>> + Send;
+    fn query_dtr1(&mut self, addr: Short) -> impl Future<Output = Result<u8, Self::Error>> + Send;
+    fn query_dtr2(&mut self, addr: Short) -> impl Future<Output = Result<u8, Self::Error>> + Send;
+
+    fn enable_write_memory(
+        &mut self,
+        addr: Self::Address,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
     fn write_memory_location(
         &mut self,
         data: u8,
@@ -65,6 +74,10 @@ pub trait Commands {
         &mut self,
         device: Short,
     ) -> impl Future<Output = Result<u8, Self::Error>> + Send;
+    fn reset_momory_bank(
+        &mut self,
+        device: Short,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
     fn identify_device(
         &mut self,
         device: Self::Address,

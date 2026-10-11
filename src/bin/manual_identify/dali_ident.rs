@@ -12,7 +12,10 @@ use dali::gear::cmd_defs as cmd;
 use dali::gear::commands_102::Commands102;
 //use dali::gear::fade::{FadeRate, FadeTime};
 use dali::utils::address_assignment::program_short_addresses;
-use dali::utils::parse_config::{self, ConfigureGear, CreateGear, DynResult};
+use dali::utils::configure_gear::{self, ConfigureGear};
+use dali::utils::device_configuration::{self, ConfigureDevice};
+use dali::utils::error::DynResult;
+use dali::utils::parse_config::{self, CreateDevice};
 use dali_tools as dali;
 use dali_tools::common::driver_commands::DriverCommands;
 use log::debug;
@@ -66,12 +69,12 @@ impl Default for ConfigFile {
         Self { dali: Vec::new() }
     }
 }
-impl CreateGear for ConfigFile {
-    fn new_gear(
+impl CreateDevice for ConfigFile {
+    fn new_device(
         &mut self,
         name: &str,
         _gear_type: &str,
-    ) -> DynResult<&mut (dyn ConfigureGear + Send + Sync)> {
+    ) -> DynResult<&mut (dyn ConfigureDevice + Send + Sync)> {
         let gear_conf = DaliGearConfiguration {
             label: name.to_string(),
             address: None,
@@ -80,6 +83,16 @@ impl CreateGear for ConfigFile {
         Ok(device)
     }
 }
+impl ConfigureDevice for DaliGearConfiguration {
+    fn configure(
+        &mut self,
+        configuration: &dyn device_configuration::Map,
+        index: usize,
+    ) -> device_configuration::Result<()> {
+        configure_gear::parse_gear(self, configuration, index)
+    }
+}
+
 pub struct DaliConfigurationDriver {
     hw_driver: Arc<Mutex<Box<dyn DaliDriver>>>,
     low_level: u8,

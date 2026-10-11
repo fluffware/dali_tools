@@ -10,9 +10,15 @@ use crate::drivers::send_flags::Flags;
 use crate::gear::cmd_defs;
 use crate::gear::{device_type, light_source, status};
 use crate::simulator::device::ParameterError;
-use crate::utils::parse_config::ConfigureGear;
+use crate::utils::configure_gear;
+use crate::utils::configure_gear::ConfigureGear;
+use crate::utils::device_configuration;
+use crate::utils::device_configuration::ConfigureDevice;
 use field_access_json::{Error as FieldError, FieldAccessJson};
 use field_access_json_derive::FieldAccessJson;
+use futures::FutureExt;
+use futures::future;
+use futures::future::Either;
 use linkme::distributed_slice;
 use log::debug;
 use rand::RngExt;
@@ -21,9 +27,11 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::ops::Range;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::time::Instant;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 extern crate rand;
@@ -226,6 +234,7 @@ impl GearState {
 pub struct DaliSimGear {
     state: Arc<RwLock<GearState>>,
     thread: Option<JoinHandle<()>>,
+    stop: Option<oneshot::Sender<()>>,
 }
 
 impl DaliSimGear {
@@ -237,6 +246,7 @@ impl DaliSimGear {
         DaliSimGear {
             state: Arc::new(RwLock::new(state)),
             thread: None,
+            stop: None,
         }
     }
 }
@@ -1032,13 +1042,33 @@ impl ConfigureGear for DaliSimGear {
     }
 }
 impl DaliSimDevice for DaliSimGear {
+    fn parent(&self) -> &dyn DaliSimDevice {
+        self
+    }
+
+    fn parent_mut(&mut self) -> &mut dyn DaliSimDevice {
+        self
+    }
+
     fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()> {
+        if self.thread.is_some() {
+            return Err("Simulated gear already running".into());
+        }
+        let (stop_send, stop_recv) = oneshot::channel();
+        self.stop = Some(stop_send);
         self.state.write().unwrap().init_end_time = bus_device.current_time() + INIT_TIMEOUT;
-        self.thread = Some(tokio::spawn(device_thread(bus_device, self.state.clone())));
+        self.thread = Some(tokio::spawn(device_thread(
+            bus_device,
+            self.state.clone(),
+            Box::pin(stop_recv.map(|_| ())),
+        )));
         Ok(())
     }
 
     fn stop(&mut self) -> DynResult<()> {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
         Ok(())
     }
 
@@ -1195,69 +1225,96 @@ impl DaliSimDevice for DaliSimGear {
     }
 }
 
-async fn device_thread(bus: DaliSimBusDevice, state: Arc<RwLock<GearState>>) {
-    let mut last_event = None;
-    loop {
-        match bus.wait().await {
-            DaliSimBusDeviceEvent::Timeout => {}
-            DaliSimBusDeviceEvent::Shutdown => break,
-            DaliSimBusDeviceEvent::Message(msg) => {
-                let mut flags = Flags::Empty;
-                match (&msg, &last_event) {
-                    (
-                        DaliSimBusEvent {
-                            timestamp: ts,
-                            event_type: DaliBusEventType::Frame16(cmd),
-                            ..
-                        },
-                        Some(DaliSimBusEvent {
-                            timestamp: last_ts,
-                            event_type: DaliBusEventType::Frame16(last_cmd),
-                            ..
-                        }),
-                    ) => {
-                        if ts.duration_since(*last_ts) < FRAME_16_DURATION + SEND_TWICE_DURATION
-                            && cmd == last_cmd
-                        {
-                            flags = flags | Flags::SendTwice(true);
-                        }
-                    }
-                    _ => {}
-                }
+impl ConfigureDevice for DaliSimGear {
+    fn configure(
+        &mut self,
+        configuration: &dyn device_configuration::Map,
+        index: usize,
+    ) -> device_configuration::Result<()> {
+        configure_gear::parse_gear(self, configuration, index)
+    }
+}
 
-                last_event = Some(msg.clone());
-                let event_type = match msg.event_type {
-                    DaliBusEventType::Frame16(cmd) => {
-                        let mut state = state.write().unwrap();
-                        let short_address = state.short_address;
-                        state.current_time = bus.current_time();
-                        check_timers(&mut state);
-                        pre_cmd16(&mut *state, cmd);
-                        match cmd[0] >> 1 {
-                            addr @ 0x00..=0x3f if addr == short_address => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
+async fn device_thread(
+    bus: DaliSimBusDevice,
+    state: Arc<RwLock<GearState>>,
+    stop: Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>,
+) {
+    let mut last_event = None;
+    let mut stop = Some(stop);
+    loop {
+        let bus_wait = bus.wait();
+        tokio::pin!(bus_wait);
+        let res = future::select(bus_wait, stop.take().unwrap()).await;
+        match res {
+            Either::Left((event, other)) => {
+                stop = Some(other);
+                match event {
+                    DaliSimBusDeviceEvent::Timeout => {}
+                    DaliSimBusDeviceEvent::Shutdown => break,
+                    DaliSimBusDeviceEvent::Message(msg) => {
+                        let mut flags = Flags::Empty;
+                        match (&msg, &last_event) {
+                            (
+                                DaliSimBusEvent {
+                                    timestamp: ts,
+                                    event_type: DaliBusEventType::Frame16(cmd),
+                                    ..
+                                },
+                                Some(DaliSimBusEvent {
+                                    timestamp: last_ts,
+                                    event_type: DaliBusEventType::Frame16(last_cmd),
+                                    ..
+                                }),
+                            ) => {
+                                if ts.duration_since(*last_ts)
+                                    < FRAME_16_DURATION + SEND_TWICE_DURATION
+                                    && cmd == last_cmd
+                                {
+                                    flags = flags | Flags::SendTwice(true);
+                                }
                             }
-                            addr @ 0x40..=0x4f if state.gear_groups & (1 << (addr & 0x0f)) != 0 => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
+                            _ => {}
+                        }
+
+                        last_event = Some(msg.clone());
+                        let event_type = match msg.event_type {
+                            DaliBusEventType::Frame16(cmd) => {
+                                let mut state = state.write().unwrap();
+                                let short_address = state.short_address;
+                                state.current_time = bus.current_time();
+                                check_timers(&mut state);
+                                pre_cmd16(&mut *state, cmd);
+                                match cmd[0] >> 1 {
+                                    addr @ 0x00..=0x3f if addr == short_address => {
+                                        device_cmd(&mut *state, cmd[0], cmd[1], flags)
+                                    }
+                                    addr @ 0x40..=0x4f
+                                        if state.gear_groups & (1 << (addr & 0x0f)) != 0 =>
+                                    {
+                                        device_cmd(&mut *state, cmd[0], cmd[1], flags)
+                                    }
+                                    0x7e if state.short_address == MASK => {
+                                        device_cmd(&mut *state, cmd[0], cmd[1], flags)
+                                    }
+                                    0x7f => device_cmd(&mut *state, cmd[0], cmd[1], flags),
+                                    _ => special_cmd(&mut *state, cmd[0], cmd[1], flags),
+                                }
                             }
-                            0x7e if state.short_address == MASK => {
-                                device_cmd(&mut *state, cmd[0], cmd[1], flags)
-                            }
-                            0x7f => device_cmd(&mut *state, cmd[0], cmd[1], flags),
-                            _ => special_cmd(&mut *state, cmd[0], cmd[1], flags),
+                            _ => None,
+                        };
+                        if let Some(event_type) = event_type {
+                            let now = bus.current_time();
+                            bus.add_event(
+                                event_type,
+                                now + FRAME_8_DURATION + REPLY_DELAY,
+                                Some(now + REPLY_DELAY),
+                            );
                         }
                     }
-                    _ => None,
-                };
-                if let Some(event_type) = event_type {
-                    let now = bus.current_time();
-                    bus.add_event(
-                        event_type,
-                        now + FRAME_8_DURATION + REPLY_DELAY,
-                        Some(now + REPLY_DELAY),
-                    );
                 }
             }
+            Either::Right(_) => break,
         }
     }
 }

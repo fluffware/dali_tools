@@ -1,5 +1,8 @@
 use crate::simulator;
-use crate::utils::parse_config::{self, ConfigureGear, CreateGear, DynResult};
+use crate::utils::device_configuration::ConfigureDevice;
+use crate::utils::error::DynResult;
+use crate::utils::parse_config::CreateDevice;
+use crate::utils::parse_config::{self};
 use simulator::device::{DALI_SIMULATOR_DEVICES, DaliSimDevice};
 use simulator::sim_bus::{DaliSimBus, DaliSimBusDevice};
 use simulator::sim_scheduler::SimulatorScheduler;
@@ -18,12 +21,12 @@ impl GearFactory {
     }
 }
 
-impl CreateGear for GearFactory {
-    fn new_gear(
+impl CreateDevice for GearFactory {
+    fn new_device(
         &mut self,
         name: &str,
         gear_type: &str,
-    ) -> DynResult<&mut (dyn ConfigureGear + Send + Sync)> {
+    ) -> DynResult<&mut (dyn ConfigureDevice + Send + Sync)> {
         let Some(dev_entry) = DALI_SIMULATOR_DEVICES
             .iter()
             .position(|registered| registered.name == gear_type)

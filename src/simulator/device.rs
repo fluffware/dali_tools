@@ -1,5 +1,5 @@
 use crate::simulator::sim_bus::DaliSimBusDevice;
-use crate::utils::parse_config::ConfigureGear;
+use crate::utils::device_configuration::ConfigureDevice;
 use linkme::distributed_slice;
 
 type DynResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -28,16 +28,25 @@ impl std::fmt::Display for ParameterError {
     }
 }
 
-pub trait DaliSimDevice: ConfigureGear + Send {
-    /* If index > 0 then a single configuration is repeated for more than one
-    device. Adjust parameters (e.g. shorAddress) accordingly.
-    */
+pub trait DaliSimDevice: ConfigureDevice + Send {
+    /// Parent class instance
+    fn parent(&self) -> &dyn DaliSimDevice;
+    fn parent_mut(&mut self) -> &mut dyn DaliSimDevice;
+
     /// Called when the device is connected to a bus
-    fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()>;
+    fn start(&mut self, bus_device: DaliSimBusDevice) -> DynResult<()> {
+        self.parent_mut().start(bus_device)
+    }
     /// Called when disconnected from the bus
-    fn stop(&mut self) -> DynResult<()>;
+    fn stop(&mut self) -> DynResult<()> {
+        self.parent_mut().stop()
+    }
     // Get a named device parameter as a JSON string
-    fn get_parameter(&self, name: &str) -> Result<String, ParameterError>;
+    fn get_parameter(&self, name: &str) -> Result<String, ParameterError> {
+        self.parent().get_parameter(name)
+    }
     // Set a named device parameter from a JSON string
-    fn set_parameter(&self, name: &str, value: &str) -> Result<(), ParameterError>;
+    fn set_parameter(&self, name: &str, value: &str) -> Result<(), ParameterError> {
+        self.parent().set_parameter(name, value)
+    }
 }

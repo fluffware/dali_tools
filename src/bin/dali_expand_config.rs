@@ -1,7 +1,10 @@
 use clap::{Arg, Command};
 use dali_tools::common::address::DisplayValue;
 use dali_tools::common::address::{Long, Short};
-use dali_tools::utils::parse_config::{self, ConfigureGear, CreateGear, DynResult};
+use dali_tools::utils::configure_gear::{self, ConfigureGear};
+use dali_tools::utils::device_configuration::{self, ConfigureDevice};
+use dali_tools::utils::error::DynResult;
+use dali_tools::utils::parse_config::{self, CreateDevice};
 use serde::Serializer;
 use serde_derive::Serialize;
 use std::collections::BTreeMap;
@@ -27,35 +30,43 @@ where
 struct Gear {
     #[serde(rename = "type")]
     gear_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "randomAddress")]
     random_address: Option<Long>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "shortAddress")]
     #[serde(serialize_with = "serialize_short_addr")]
     short_address: Option<Option<Short>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "lastLightLevel")]
     last_light_level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "targetLevel")]
     target_level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "powerOnLevel")]
     power_on_level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "systemFailureLevel")]
     system_failure_level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "minLevel")]
     min_level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "maxLevel")]
     max_level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fadeTime")]
     fade_time: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fadeRate")]
     fade_rate: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "extendedFadeTimeBase"
+    )]
     extended_fade_time_base: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "extendedFadeTimeMultiplier"
+    )]
     extended_fade_time_multiplier: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "gearGroups")]
     gear_groups: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     scenes: Option<Vec<(u8, u8)>>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "deviceTypes")]
+    device_types: Option<Vec<u8>>,
 }
 
 impl Default for Gear {
@@ -76,6 +87,7 @@ impl Default for Gear {
             extended_fade_time_multiplier: None,
             gear_groups: None,
             scenes: None,
+            device_types: None,
         }
     }
 }
@@ -129,6 +141,19 @@ impl ConfigureGear for Gear {
     fn conf_scenes(&mut self, map: &[(u8, u8)]) {
         self.scenes = Some(Vec::from(map))
     } // (scene number (0 based), scene level)
+    fn conf_device_types(&mut self, types: &[u8]) {
+        self.device_types = Some(Vec::from(types));
+    }
+}
+
+impl ConfigureDevice for Gear {
+    fn configure(
+        &mut self,
+        configuration: &dyn device_configuration::Map,
+        index: usize,
+    ) -> device_configuration::Result<()> {
+        configure_gear::parse_gear(self, configuration, index)
+    }
 }
 
 #[derive(Serialize)]
@@ -144,13 +169,13 @@ impl Default for GearFactory {
     }
 }
 
-impl CreateGear for GearFactory {
-    fn new_gear(
+impl CreateDevice for GearFactory {
+    fn new_device(
         &mut self,
         name: &str,
         gear_type: &str,
-    ) -> DynResult<&mut (dyn ConfigureGear + Sync + Send)> {
-        eprintln!("new_gear: {}", name);
+    ) -> DynResult<&mut (dyn ConfigureDevice + Sync + Send)> {
+        //eprintln!("new_gear: {}", name);
         let gear = Gear::new(gear_type);
         self.gears.insert(name.to_string(), gear);
         Ok(self.gears.get_mut(name).unwrap())
